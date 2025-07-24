@@ -60,11 +60,7 @@ def call_llm(prompt: str, use_cache: bool = True) -> str:
     messages = [{"role": "user", "content": prompt}],
     temperature = 0.6,
 )
- 
-    # response = completion.create(
-    #     model="deepseek-ai/DeepSeek-R1",
-    #     messages=[{"role": "user", "content": prompt}],
-    # )
+
     
     response_text = response.choices[0].message.content
 

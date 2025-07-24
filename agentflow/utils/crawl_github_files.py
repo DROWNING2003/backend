@@ -3,7 +3,87 @@ import os        # 用于操作系统相关功能
 import tempfile  # 用于创建临时文件和目录
 import git       # 用于Git仓库操作
 import fnmatch   # 用于文件名模式匹配
+import shutil    # 用于文件操作
+import stat      # 用于文件权限操作
 from typing import Union, Set, Dict  # 类型提示
+
+# 预定义的文件模式配置
+FILE_PATTERNS = {
+    "code": {"*.py", "*.js", "*.ts", "*.java", "*.cpp", "*.c", "*.h", "*.cs", "*.go", "*.rs", "*.php"},
+    "web": {"*.html", "*.css", "*.js", "*.ts", "*.jsx", "*.tsx", "*.vue", "*.scss", "*.sass", "*.less"},
+    "docs": {"*.md", "*.txt", "*.rst", "*.doc", "*.docx", "*.pdf"},
+    "config": {"*.json", "*.yaml", "*.yml", "*.toml", "*.ini", "*.cfg", "*.conf"},
+    "python": {"*.py", "*.pyx", "*.pyi"},
+    "javascript": {"*.js", "*.ts", "*.jsx", "*.tsx", "*.mjs"},
+    "data": {"*.csv", "*.json", "*.xml", "*.xlsx", "*.xls"},
+    "all": {"*"},  # 所有文件
+}
+
+# 预定义的排除模式
+EXCLUDE_PATTERNS = {
+    "common": {"*/node_modules/*", "*/.git/*", "*/venv/*", "*/__pycache__/*", "*.pyc", "*/dist/*", "*/build/*"},
+    "test": {"*/test/*", "*/tests/*", "*_test.py", "*_test.js", "test_*.py"},
+    "cache": {"*/.cache/*", "*/tmp/*", "*/temp/*", "*/.DS_Store"},
+}
+
+def get_file_patterns(pattern_key: str = None, custom_patterns: Union[str, Set[str]] = None) -> Set[str]:
+    """
+    获取文件模式配置
+    
+    参数:
+        pattern_key (str): 预定义模式键名 ("code", "web", "docs", "config", "python", "javascript", "data", "all")
+        custom_patterns (str或set): 自定义模式
+        
+    返回:
+        set: 文件模式集合
+    """
+    if custom_patterns:
+        if isinstance(custom_patterns, str):
+            return {custom_patterns}
+        return custom_patterns
+    
+    if pattern_key and pattern_key in FILE_PATTERNS:
+        return FILE_PATTERNS[pattern_key]
+    
+    return None  # 默认包含所有文件
+
+def get_exclude_patterns(exclude_key: str = None, custom_excludes: Union[str, Set[str]] = None) -> Set[str]:
+    """
+    获取排除模式配置
+    
+    参数:
+        exclude_key (str): 预定义排除键名 ("common", "test", "cache")
+        custom_excludes (str或set): 自定义排除模式
+        
+    返回:
+        set: 排除模式集合
+    """
+    patterns = set()
+    
+    if exclude_key and exclude_key in EXCLUDE_PATTERNS:
+        patterns.update(EXCLUDE_PATTERNS[exclude_key])
+    
+    if custom_excludes:
+        if isinstance(custom_excludes, str):
+            patterns.add(custom_excludes)
+        else:
+            patterns.update(custom_excludes)
+    
+    return patterns if patterns else None
+
+def remove_readonly(func, path, _):
+    """
+    Windows下删除只读文件的错误处理函数
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+def safe_rmtree(path):
+    """
+    安全删除目录树，处理Windows下的只读文件问题
+    """
+    if os.path.exists(path):
+        shutil.rmtree(path, onerror=remove_readonly)
 
 def clone_repository(repo_url: str, target_dir: str) -> git.Repo:
     """
@@ -78,7 +158,8 @@ def filter_and_read_files(
     repo_dir: str,
     max_file_size: int = 1 * 1024 * 1024,  # 1 MB
     include_patterns: Union[str, Set[str]] = None,
-    exclude_patterns: Union[str, Set[str]] = None
+    exclude_patterns: Union[str, Set[str]] = None,
+    **kwargs
 ) -> Dict:
     """
     根据模式过滤并读取文件
@@ -161,6 +242,7 @@ def filter_and_read_files(
         }
     }
 
+
 def crawl_github_files(
     repo_url: str,
     commit_index: int = None,
@@ -181,89 +263,136 @@ def crawl_github_files(
     返回:
         dict: 包含文件和统计信息的字典
     """
-    # 通过Git克隆仓库到临时目录
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        try:
-            # 方法1: 克隆仓库
-            repo = clone_repository(repo_url, tmpdirname)
-            
-            # 方法2: 根据传参回到指定的commit
-            reset_to_commit(repo, commit_index)
-            
-            # 方法3: 过滤并读取文件
-            result = filter_and_read_files(
-                tmpdirname,
-                max_file_size=max_file_size,
-                include_patterns=include_patterns,
-                exclude_patterns=exclude_patterns
-            )
-            
-            return result
-            
-        except Exception as e:
-            return {
-                "files": {}, 
-                "stats": {
-                    "error": str(e), 
-                    "downloaded_count": 0, 
-                    "skipped_count": 0
-                }
+    # 创建临时目录并手动管理清理
+    tmpdirname = tempfile.mkdtemp()
+    try:
+        # # 方法1: 克隆仓库
+        # repo = clone_repository(repo_url, tmpdirname)
+        
+        # 方法2: 根据传参回到指定的commit
+        reset_to_commit(repo, commit_index)
+        
+        # 方法3: 过滤并读取文件
+        result = filter_and_read_files(
+            tmpdirname,
+            max_file_size=max_file_size,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns
+        )
+        
+        return result
+        
+    except Exception as e:
+        return {
+            "files": {}, 
+            "stats": {
+                "error": str(e), 
+                "downloaded_count": 0, 
+                "skipped_count": 0
             }
+        }
+    finally:
+        # 手动清理临时目录，处理Windows权限问题
+        try:
+            safe_rmtree(tmpdirname)
+        except Exception as cleanup_error:
+            print(f"清理临时目录时出错: {cleanup_error}")
 
 # 示例用法
 if __name__ == "__main__":
-    # 使用HTTPS格式的仓库URL
-    repo_url = "https://github.com/DROWNING2003/Roo-Code"
+    repo_url = "https://github.com/zengyi-thinking/auto_mate_test2.git"
     
-    # 示例1: 获取最新版本的Python和Markdown文件
-    print("=== 示例1: 获取最新版本 ===")
-    result = crawl_github_files(
-        repo_url,
-        commit_index=None,  # 不指定commit，使用最新版本
-        max_file_size=1 * 1024 * 1024,  # 1 MB 字节
-        include_patterns={"*.py", "*.md"},  # 包含Python和Markdown文件
+    # 通用调用方式示例
+    print("=== 通用调用方式示例 ===")
+    
+    # 方式1: 使用预定义模式
+    print("\n1. 使用预定义模式 - 只获取Python文件:")
+    tmpdirname = tempfile.mkdtemp()
+    repo = clone_repository(repo_url, tmpdirname)
+    reset_to_commit(repo, 3)
+    result = filter_and_read_files(
+            tmpdirname,
+            max_file_size=1 * 1024 * 1024,
+            include_patterns=get_file_patterns("code"),  # 预定义Python模式
+            exclude_patterns=get_exclude_patterns("common")  # 排除常见无用文件
     )
-    
+    # 显示文件列表
     files = result["files"]
-    stats = result["stats"]
-    
-    # 检查是否有错误
-    if "error" in stats:
-        print(f"\n错误: {stats['error']}")
-        print(f"已下载 {stats['downloaded_count']} 个文件。")
-    else:
-        print(f"\n已下载 {stats['downloaded_count']} 个文件。")
-        print(f"跳过 {stats['skipped_count']} 个文件(由于大小限制或模式)。")
-        print(f"包含模式: {stats['include_patterns']}")
-        print(f"排除模式: {stats['exclude_patterns']}")
+    print("文件列表:")
+    for file_path in sorted(files.keys())[:10]:  # 只显示前10个
+        file_content = files[file_path]
+        print(f"  {file_path}")
+        # 显示文件内容（前200字符 + 省略号）
+        preview = file_content[:200].replace('\n', ' ')  # 去除换行便于显示
+        if len(file_content) > 200:
+            preview += " [...]"
+        print(f"内容预览: {preview}")
+    if len(files) > 10:
+        print(f"  ... 还有 {len(files) - 10} 个文件")
         
-        # 显示字典中的所有文件路径
-        print("\n字典中的文件:")
-        for file_path in sorted(files.keys()):
-            print(f"  {file_path}")
+       
     
-    # 示例2: 获取第一个commit的文件
-    print("\n=== 示例2: 获取第一个commit ===")
-    result2 = crawl_github_files(
-        repo_url,
-        commit_index=1,  # 回到最早的第一个commit
-        max_file_size=1 * 1024 * 1024,
-        include_patterns={"*.py", "*.md"},
-    )
+    # 方式2: 使用自定义模式
+    # print("\n2. 使用自定义模式 - 获取特定文件:")
+    # tmpdirname = tempfile.mkdtemp()
+    # try:
+    #     repo = clone_repository(repo_url, tmpdirname)
+    #     reset_to_commit(repo, 1)
+    #     result = filter_and_read_files(
+    #         tmpdirname,
+    #         max_file_size=1 * 1024 * 1024,
+    #         include_patterns=get_file_patterns(custom_patterns={"*.py", "*.md", "*.json"}),
+    #         exclude_patterns=get_exclude_patterns("test", {"*/examples/*"})  # 排除测试和示例
+    #     )
+    #     print(f"获取到 {result['stats']['downloaded_count']} 个文件")
+    # finally:
+    #     safe_rmtree(tmpdirname)
     
-    files2 = result2["files"]
-    stats2 = result2["stats"]
+    # # 方式3: 获取所有代码文件
+    # print("\n3. 获取所有代码文件:")
+    # tmpdirname = tempfile.mkdtemp()
+    # try:
+    #     repo = clone_repository(repo_url, tmpdirname)
+    #     reset_to_commit(repo, 1)
+    #     result = filter_and_read_files(
+    #         tmpdirname,
+    #         max_file_size=1 * 1024 * 1024,
+    #         include_patterns=get_file_patterns("code"),  # 所有代码文件
+    #         exclude_patterns=get_exclude_patterns("common")
+    #     )
+    #     print(f"获取到 {result['stats']['downloaded_count']} 个代码文件")
+        
+    #     # 显示文件列表
+    #     files = result["files"]
+    #     print("文件列表:")
+    #     for file_path in sorted(files.keys())[:10]:  # 只显示前10个
+    #         print(f"  {file_path}")
+    #     if len(files) > 10:
+    #         print(f"  ... 还有 {len(files) - 10} 个文件")
+            
+    # finally:
+    #     safe_rmtree(tmpdirname)
     
-    if "error" in stats2:
-        print(f"错误: {stats2['error']}")
-    else:
-        print(f"第一个commit包含 {stats2['downloaded_count']} 个文件")
-        print("文件列表:")
-        for file_path in sorted(files2.keys()):
-            print(f"  {file_path}")
+    # # 方式4: 最简单的调用 - 获取所有文件
+    # print("\n4. 最简单调用 - 获取所有文件:")
+    # result = crawl_github_files(
+    #     repo_url,
+    #     commit_index=1,
+    #     max_file_size=1 * 1024 * 1024,
+    #     include_patterns=get_file_patterns("all"),  # 所有文件
+    #     exclude_patterns=get_exclude_patterns("common")  # 排除常见无用文件
+    # )
     
-    # 示例: 访问特定文件的内容
-    if files:
-        sample_file = next(iter(files))
-        print(f"\n示例文件: {sample_file}")
-        print(f"内容预览: {files[sample_file][:200]}...")
+    # if "error" not in result["stats"]:
+    #     print(f"获取到 {result['stats']['downloaded_count']} 个文件")
+    # else:
+    #     print(f"错误: {result['stats']['error']}")
+    
+    # print("\n=== 可用的预定义模式 ===")
+    # print("文件类型模式:")
+    # for key, patterns in FILE_PATTERNS.items():
+    #     print(f"  {key}: {patterns}")
+    
+    # print("\n排除模式:")
+    # for key, patterns in EXCLUDE_PATTERNS.items():
+    #     print(f"  {key}: {patterns}")
