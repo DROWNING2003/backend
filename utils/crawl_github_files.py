@@ -124,7 +124,7 @@ def crawl_github_files(
 # 示例用法
 if __name__ == "__main__":
     # 使用SSH格式的仓库URL
-    repo_url = "git@github.com:pydantic/pydantic.git"
+    repo_url = "https://github.com/DROWNING2003/Roo-Code"
     # 或者使用HTTPS格式:
     # repo_url = "https://github.com/pydantic/pydantic.git"
     
