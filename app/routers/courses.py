@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import logging
-
 from app.database.connection import get_db
 from app.models.course import Course
 from app.models.level import Level

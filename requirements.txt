@@ -34,6 +34,9 @@ pytest-asyncio>=0.23.0
 black>=24.0.0
 flake8>=7.0.0
 
+# 搜索库
+tavily-python
+
 # 安全相关
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
