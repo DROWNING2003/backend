@@ -5,7 +5,7 @@
 import logging
 from sqlalchemy import text
 from app.database.connection import engine, Base, SessionLocal
-from app.models import Level, Course, Repository, RepositoryFile, CrawlTask, LLMCache
+from app.models import Course, Repository, RepositoryFile, CrawlTask, LLMCache, UserProgress, Tutorial, UserAchievement
 
 logger = logging.getLogger(__name__)
 
@@ -64,61 +64,98 @@ def create_tables():
 
 def init_sample_data():
     """
-    初始化示例数据
+    初始化示例数据（精简版）
     """
     try:
         db = SessionLocal()
-        
+
         # 检查是否已有数据
-        if db.query(Level).count() > 0:
+        if db.query(Tutorial).count() > 0:
             logger.info("数据库已有数据，跳过初始化")
             db.close()
             return
-        
-        # 创建示例等级数据
-        levels = [
-            Level(
-                name="初学者",
-                description="适合编程新手的入门级别",
-                difficulty=1,
-                required_score=0,
-                is_active=True
+
+        # 创建示例教程数据（替代原来的等级系统）
+        tutorials = [
+            Tutorial(
+                title="Python基础入门",
+                description="从零开始学习Python编程语言",
+                difficulty="beginner",
+                estimated_time=120,
+                is_active=True,
+                extra_data={
+                    "tags": ["python", "programming", "beginner"],
+                    "chapters": [
+                        {
+                            "id": 1,
+                            "title": "Python环境搭建",
+                            "description": "学习如何安装和配置Python开发环境",
+                            "estimated_time": 30,
+                            "order_index": 1
+                        },
+                        {
+                            "id": 2,
+                            "title": "基础语法",
+                            "description": "掌握Python的基本语法和数据类型",
+                            "estimated_time": 45,
+                            "order_index": 2
+                        },
+                        {
+                            "id": 3,
+                            "title": "控制流程",
+                            "description": "学习条件语句和循环结构",
+                            "estimated_time": 45,
+                            "order_index": 3
+                        }
+                    ]
+                }
             ),
-            Level(
-                name="进阶者",
-                description="有一定编程基础的学习者",
-                difficulty=3,
-                required_score=100,
-                is_active=True
-            ),
-            Level(
-                name="高级开发者",
-                description="具备丰富开发经验的程序员",
-                difficulty=5,
-                required_score=500,
-                is_active=True
-            ),
-            Level(
-                name="专家",
-                description="技术专家级别",
-                difficulty=8,
-                required_score=1000,
-                is_active=True
+            Tutorial(
+                title="FastAPI实战项目",
+                description="使用FastAPI构建现代Web API",
+                difficulty="intermediate",
+                estimated_time=240,
+                is_active=True,
+                extra_data={
+                    "tags": ["fastapi", "web", "api", "intermediate"],
+                    "chapters": [
+                        {
+                            "id": 1,
+                            "title": "FastAPI简介",
+                            "description": "了解FastAPI框架的特点和优势",
+                            "estimated_time": 60,
+                            "order_index": 1
+                        },
+                        {
+                            "id": 2,
+                            "title": "路由和请求处理",
+                            "description": "学习如何定义路由和处理HTTP请求",
+                            "estimated_time": 90,
+                            "order_index": 2
+                        },
+                        {
+                            "id": 3,
+                            "title": "数据库集成",
+                            "description": "集成数据库并实现CRUD操作",
+                            "estimated_time": 90,
+                            "order_index": 3
+                        }
+                    ]
+                }
             )
         ]
-        
-        for level in levels:
-            db.add(level)
-        
+
+        for tutorial in tutorials:
+            db.add(tutorial)
+
         db.commit()
         
-        # 创建示例课程数据
+        # 创建示例课程数据（精简版，移除level_id依赖）
         courses = [
             Course(
                 title="Python基础教程",
                 description="从零开始学习Python编程语言",
                 github_url="https://github.com/example/python-basics",
-                level_id=1,
                 difficulty=1,
                 estimated_time=120,
                 is_published=True
@@ -127,7 +164,6 @@ def init_sample_data():
                 title="FastAPI实战项目",
                 description="使用FastAPI构建现代Web API",
                 github_url="https://github.com/example/fastapi-tutorial",
-                level_id=2,
                 difficulty=3,
                 estimated_time=240,
                 is_published=True
@@ -136,25 +172,15 @@ def init_sample_data():
                 title="微服务架构设计",
                 description="学习微服务架构的设计和实现",
                 github_url="https://github.com/example/microservices",
-                level_id=3,
                 difficulty=5,
                 estimated_time=480,
                 is_published=True
-            ),
-            Course(
-                title="分布式系统实践",
-                description="深入理解分布式系统的原理和实践",
-                github_url="https://github.com/example/distributed-systems",
-                level_id=4,
-                difficulty=8,
-                estimated_time=720,
-                is_published=True
             )
         ]
-        
+
         for course in courses:
             db.add(course)
-        
+
         db.commit()
         db.close()
         
@@ -215,7 +241,9 @@ def get_database_info():
         db = SessionLocal()
         
         info = {
-            "levels_count": db.query(Level).count(),
+            "tutorials_count": db.query(Tutorial).count(),
+            "user_progress_count": db.query(UserProgress).count(),
+            "user_achievements_count": db.query(UserAchievement).count(),
             "courses_count": db.query(Course).count(),
             "repositories_count": db.query(Repository).count(),
             "files_count": db.query(RepositoryFile).count(),

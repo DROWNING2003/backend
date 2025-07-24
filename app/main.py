@@ -116,7 +116,7 @@ async def root():
 
 # 注册路由
 app.include_router(github.router, prefix="/api", tags=["GitHub仓库"])
-app.include_router(levels.router, prefix="/api", tags=["等级管理"])
+app.include_router(levels.router, prefix="/api", tags=["任务进度管理"])
 app.include_router(courses.router, prefix="/api", tags=["课程管理"])
 app.include_router(llm.router, prefix="/api", tags=["AI对话"])
 app.include_router(tts.router, prefix="/api", tags=["文本转语音"])
