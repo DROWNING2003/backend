@@ -1,7 +1,11 @@
 # 数据模型模块初始化文件
 
-from .level import Level
 from .course import Course
 from .repository import Repository, RepositoryFile, CrawlTask, LLMCache
+from .progress import UserProgress, Tutorial, UserAchievement
 
-__all__ = ["Level", "Course", "Repository", "RepositoryFile", "CrawlTask", "LLMCache"]
+__all__ = [
+    "Course",
+    "Repository", "RepositoryFile", "CrawlTask", "LLMCache",
+    "UserProgress", "Tutorial", "UserAchievement"
+]

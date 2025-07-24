@@ -45,6 +45,13 @@ else:
 Base = declarative_base()
 
 
+def get_database_url():
+    """
+    获取数据库连接URL
+    """
+    return DATABASE_URL
+
+
 def get_db():
     """
     获取数据库会话
