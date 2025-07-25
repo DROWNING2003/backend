@@ -5,6 +5,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import logging
+import tempfile
+import shutil
 
 from app.database.connection import get_db
 from app.schemas.level import (
@@ -13,6 +15,7 @@ from app.schemas.level import (
 )
 from app.services.level_service import LevelService
 from app.services.ai_service import AIService
+from app.models.course import Course
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -26,27 +29,123 @@ async def get_level(
     db: Session = Depends(get_db)
 ):
     """
-    获取指定关卡的详细内容
+    获取指定关卡的详细内容，包含对应提交的文件树结构
     
     参数：
+    - course_id: 课程ID
     - level_id: 关卡ID
     
     返回：
     - 关卡的完整信息（标题、描述、通过要求、顺序号、所属课程信息等）
+    - 对应提交的项目文件树结构
     """
+    import tempfile
+    from agentflow.utils.crawl_github_files import (
+        clone_repository, reset_to_commit, filter_and_read_files, 
+        get_file_patterns, get_exclude_patterns
+    )
+    from app.utils.file_tree_builder import build_file_tree_from_files, sort_file_tree
+    from app.models.course import Course
+    
     try:
-        logger.info(f"获取关卡详情请求: {request.level_id}")
+        logger.info(f"获取关卡详情请求: 课程ID={request.course_id}, 关卡ID={request.level_id}")
         
-        result = level_service.get_level_by_id(db, request.level_id)
+        # 1. 获取关卡基本信息
+        level_result = level_service.get_level_by_id(db, request.level_id)
         
-        if not result:
+        if not level_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"关卡 {request.level_id} 不存在"
             )
         
-        logger.info(f"成功获取关卡详情: {request.level_id}")
-        return result
+        # 2. 验证关卡是否属于指定课程
+        if level_result.course_id != request.course_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"关卡 {request.level_id} 不属于课程 {request.course_id}"
+            )
+        
+        # 3. 获取课程信息
+        course = db.query(Course).filter(Course.id == request.course_id).first()
+        if not course:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"课程 {request.course_id} 不存在"
+            )
+        
+        if not course.git_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"课程 {request.course_id} 没有配置Git仓库URL"
+            )
+        
+        # 4. 获取对应提交的文件
+        tmpdirname = None
+        file_tree = None
+        
+        try:
+            # 创建临时目录
+            tmpdirname = tempfile.mkdtemp()
+            
+            # 克隆仓库
+            repo = clone_repository(course.git_url, tmpdirname)
+            
+            # 计算提交索引（关卡顺序号 + 1，因为从第2个提交开始）
+            current_index = level_result.order_number + 1
+            
+            # 重置到指定提交
+            commits = list(repo.iter_commits(reverse=True))
+            if current_index > len(commits):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"关卡对应的提交索引 {current_index} 超出仓库提交范围 (1-{len(commits)})"
+                )
+            
+            reset_to_commit(repo, commits, current_index)
+            
+            # 获取文件
+            result = filter_and_read_files(
+                tmpdirname,
+                max_file_size=1 * 1024 * 1024,
+                include_patterns=get_file_patterns("code"),  # 预定义代码模式
+                exclude_patterns=get_exclude_patterns("common")  # 排除常见无用文件
+            )
+            
+            # 构建文件树
+            if result["files"]:
+                # 构建项目名称作为根URI
+                project_name = course.git_url.split('/')[-1].replace('.git', '')
+                base_uri = f"file:///github/{project_name}"
+                
+                file_tree = build_file_tree_from_files(result["files"], base_uri)
+                file_tree = sort_file_tree(file_tree)
+                
+                logger.info(f"成功构建文件树，包含 {len(result['files'])} 个文件")
+            else:
+                logger.warning(f"未找到符合条件的文件")
+        
+        except Exception as git_error:
+            logger.error(f"获取Git文件失败: {git_error}")
+            # 不中断主流程，只是没有文件树
+            file_tree = None
+        
+        finally:
+            # 清理临时目录
+            if tmpdirname:
+                try:
+                    import shutil
+                    shutil.rmtree(tmpdirname)
+                except Exception as cleanup_error:
+                    logger.warning(f"清理临时目录失败: {cleanup_error}")
+        
+        # 5. 构建响应
+        response_data = level_result.model_dump()
+        if file_tree:
+            response_data["file_tree"] = file_tree.model_dump()
+        
+        logger.info(f"成功获取关卡详情: 课程ID={request.course_id}, 关卡ID={request.level_id}")
+        return LevelResponse(**response_data)
         
     except HTTPException:
         raise
