@@ -4,11 +4,18 @@
 
 import logging
 import os
+import sys
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+
+# 添加项目根目录到Python路径
+current_dir = Path(__file__).parent
+project_root = current_dir.parent
+sys.path.insert(0, str(project_root))
 
 from app.database.connection import check_database_connection, create_tables
 from app.routers import courses_router, levels_router
@@ -180,9 +187,9 @@ async def api_info():
 if __name__ == "__main__":
     # 开发环境运行
     uvicorn.run(
-        "app.main:app",
+        app,
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=8002,
+        reload=False,  # 直接运行时不使用reload
         log_level="info"
     )
