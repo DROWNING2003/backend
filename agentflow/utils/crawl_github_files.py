@@ -467,6 +467,7 @@ def get_commit_changes_detailed(repo: git.Repo, commit_index: int, include_diff_
         }
         
     except Exception as e:
+        print(e)
         return {"error": f"获取提交变化失败: {e}"}
 
 def get_commit_changes(repo: git.Repo, commit_index: int) -> Dict:
@@ -764,6 +765,7 @@ if __name__ == "__main__":
             include_patterns=get_file_patterns("code"),  # 预定义Python模式
             exclude_patterns=get_exclude_patterns("common")  # 排除常见无用文件
     )
+    
     # 显示文件列表
     files = result["files"]
     print("文件列表:")
@@ -804,37 +806,69 @@ if __name__ == "__main__":
         print(f"  新增行数: {summary['total_lines_added']}")
         print(f"  删除行数: {summary['total_lines_deleted']}")
         
-        print(f"\n文件变化详情:")
-        for i, file_change in enumerate(detailed_changes['file_changes'][:3]):  # 只显示前3个文件
-            print(f"  {i+1}. {file_change['path']} ({file_change['type']})")
-            print(f"     +{file_change['lines_added']} -{file_change['lines_deleted']} 行")
+    #     print(f"\n文件变化详情:")
+    #     for i, file_change in enumerate(detailed_changes['file_changes'][:3]):  # 只显示前3个文件
+    #         print(f"  {i+1}. {file_change['path']} ({file_change['type']})")
+    #         print(f"     +{file_change['lines_added']} -{file_change['lines_deleted']} 行")
+            
+    #         # 显示新内容的预览（如果是新增或修改的文件）
+    #         if file_change['type'] in ['added', 'modified'] and file_change.get('new_content'):
+    #             content = file_change['new_content']
+    #             if content != "[Binary file]":
+    #                 preview = content[:200].replace('\n', ' ')
+    #                 if len(content) > 200:
+    #                     preview += " [...]"
+    #                 print(f"     内容预览: {preview}")
+            
+    #         # 显示diff内容（如果有）
+    #         if file_change.get('diff_content') and file_change['diff_content'] != "[Binary file diff]":
+    #             diff_lines = file_change['diff_content'].split('\n')[:10]  # 只显示前10行diff
+    #             print(f"     Diff预览:")
+    #             for line in diff_lines:
+    #                 if line.startswith('+'):
+    #                     print(f"       {line}")
+    #                 elif line.startswith('-'):
+    #                     print(f"       {line}")
+    #                 elif line.startswith('@@'):
+    #                     print(f"       {line}")
+        
+    #     if len(detailed_changes['file_changes']) > 3:
+    #         print(f"  ... 还有 {len(detailed_changes['file_changes']) - 3} 个文件变化")
+    # else:
+    #     print(f"获取详细变化失败: {detailed_changes['error']}")
+    buffer = []
+    
+    if detailed_changes.get('file_changes'):
+        buffer.append("\n文件变化详情:")
+        for i, file_change in enumerate(detailed_changes['file_changes']):  # 显示所有文件
+            # buffer.append(f"  {i+1}. {file_change['path']} ({file_change['type']})")
+            # buffer.append(f"     +{file_change['lines_added']} -{file_change['lines_deleted']} 行")
             
             # 显示新内容的预览（如果是新增或修改的文件）
-            if file_change['type'] in ['added', 'modified'] and file_change.get('new_content'):
-                content = file_change['new_content']
-                if content != "[Binary file]":
-                    preview = content[:200].replace('\n', ' ')
-                    if len(content) > 200:
-                        preview += " [...]"
-                    print(f"     内容预览: {preview}")
+            # if file_change['type'] in ['added', 'modified'] and file_change.get('new_content'):
+            #     content = file_change['new_content']
+            #     if content != "[Binary file]":
+            #         preview = content[:200].replace('\n', ' ')
+            #         if len(content) > 200:
+            #             preview += " [...]"
+            #         buffer.append(f"     内容预览: {preview}")
             
             # 显示diff内容（如果有）
             if file_change.get('diff_content') and file_change['diff_content'] != "[Binary file diff]":
-                diff_lines = file_change['diff_content'].split('\n')[:10]  # 只显示前10行diff
-                print(f"     Diff预览:")
+                diff_lines = file_change['diff_content'].split('\n')[:]
+                buffer.append(f"     Diff内容:")
+                buffer.append(f"  {i+1}. {file_change['path']} ({file_change['type']})")
                 for line in diff_lines:
                     if line.startswith('+'):
-                        print(f"       {line}")
+                        buffer.append(f"       {line}")
                     elif line.startswith('-'):
-                        print(f"       {line}")
+                        buffer.append(f"       {line}")
                     elif line.startswith('@@'):
-                        print(f"       {line}")
-        
-        if len(detailed_changes['file_changes']) > 3:
-            print(f"  ... 还有 {len(detailed_changes['file_changes']) - 3} 个文件变化")
+                        buffer.append(f"       {line}")
     else:
-        print(f"获取详细变化失败: {detailed_changes['error']}")
+        buffer.append(f"获取详细变化失败: {detailed_changes.get('error', '未知错误')}")
     
+    print('\n'.join(buffer))
     # safe_rmtree(tmpdirname)
     
     # # 使用便捷函数直接从URL获取变化
