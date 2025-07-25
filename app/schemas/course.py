@@ -47,6 +47,8 @@ class CourseResponse(BaseModel):
     updated_at: Optional[datetime] = Field(None, description="更新时间")
     levels: List[LevelSummary] = Field(default=[], description="关卡列表")
     total_levels: Optional[int] = Field(None, description="总关卡数")
+    message: Optional[str] = Field(None, description="状态消息")
+    generation_status: Optional[str] = Field(None, description="关卡生成状态")
     
     model_config = {
         "json_schema_extra": {
@@ -65,6 +67,27 @@ class CourseResponse(BaseModel):
                     {"id": 2, "title": "控制流程", "order_number": 2}
                 ],
                 "total_levels": 2
+            }
+        }
+    }
+
+
+class CourseGenerationStatusResponse(BaseModel):
+    """课程关卡生成状态响应模式"""
+    course_id: int = Field(..., description="课程ID")
+    status: str = Field(..., description="生成状态: generating, completed, failed")
+    message: str = Field(..., description="状态描述信息")
+    level_count: int = Field(..., description="已生成的关卡数量")
+    is_completed: bool = Field(..., description="是否完成生成")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "course_id": 1,
+                "status": "generating",
+                "message": "关卡生成中，已生成 3 个关卡",
+                "level_count": 3,
+                "is_completed": False
             }
         }
     }
