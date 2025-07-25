@@ -159,43 +159,159 @@ async def get_level(
 
 @router.post("/check-completion", response_model=LevelCheckResponse, summary="检查关卡完成状态")
 async def check_level_completion(
-    request: LevelCheckRequest,
+    request: dict,
     db: Session = Depends(get_db)
 ):
     """
     检查关卡完成状态
     
     功能：
-    - AI审查用户提交的内容
-    - 直接返回是否通过（无需在数据库中存储完成标记）
+    - 使用AgentFlow进行智能代码检查
+    - 支持两种输入格式：字符串代码或文件树结构
     - 提供详细的反馈和改进建议
     
-    参数：
+    参数格式1（兼容旧版）：
     - level_id: 关卡ID
-    - user_answer: 用户提交的答案/代码
+    - user_answer: 用户提交的答案/代码（字符串）
+    
+    参数格式2（推荐）：
+    - level_id: 关卡ID
+    - course_id: 课程ID
+    - user_file_tree: 用户提交的文件树结构
     
     返回：
     - passed: 是否通过
     - feedback: 反馈信息
-    - score: 得分(0-100)
     - suggestions: 改进建议
     """
     try:
-        logger.info(f"检查关卡完成状态请求: {request.level_id}")
-        
-        # 验证用户答案不能为空
-        if not request.user_answer.strip():
+        level_id = request.get("level_id")
+        if not level_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="用户答案不能为空"
+                detail="缺少必要参数: level_id"
             )
         
-        result = level_service.check_level_completion(
-            db, request.level_id, request.user_answer
-        )
+        logger.info(f"检查关卡完成状态请求: 关卡ID={level_id}")
         
-        logger.info(f"关卡 {request.level_id} 检查完成，结果: {'通过' if result.passed else '未通过'}")
-        return result
+        # 检查输入格式：文件树格式（推荐）或字符串格式（兼容）
+        user_file_tree = request.get("user_file_tree")
+        user_answer = request.get("user_answer")
+        course_id = request.get("course_id")
+        
+        if user_file_tree and course_id:
+            # 格式2：使用文件树和check_flow
+            logger.info("使用文件树格式和check_flow进行检查")
+            
+            # 准备共享数据
+            shared = {
+                "level_id": level_id,
+                "course_id": course_id,
+                "user_file_tree": user_file_tree,
+                "language": "chinese",
+                "use_cache": True
+            }
+            
+            # 导入并运行检查流程
+            from agentflow.flow import check_flow
+            
+            flow = check_flow()
+            flow.run(shared)
+            
+            # 获取检查结果
+            result = shared.get("judgment_result")
+            
+            if not result:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="检查流程未返回结果"
+                )
+            
+            # 转换为API响应格式
+            response = LevelCheckResponse(
+                passed=result.get("passed", False),
+                feedback=result.get("feedback", "检查完成"),
+                score=None,  # 不使用score字段
+                suggestions=result.get("suggestions", [])
+            )
+            
+        elif user_answer:
+            # 格式1：兼容旧版字符串格式
+            logger.info("使用字符串格式进行检查（兼容模式）")
+            
+            # 验证用户答案不能为空
+            if not user_answer.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="用户答案不能为空"
+                )
+            
+            # 将字符串转换为简单的文件树格式
+            simple_file_tree = {
+                "type": "directory",
+                "uri": "file:///project",
+                "children": [
+                    {
+                        "type": "file",
+                        "uri": "file:///project/solution.py",
+                        "content": user_answer
+                    }
+                ]
+            }
+            
+            # 获取课程ID（从数据库查询关卡信息）
+            try:
+                level_result = level_service.get_level_by_id(db, level_id)
+                if not level_result:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"关卡 {level_id} 不存在"
+                    )
+                course_id = level_result.course_id
+            except Exception as e:
+                logger.error(f"获取关卡信息失败: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="无法获取关卡信息"
+                )
+            
+            # 使用check_flow进行检查
+            shared = {
+                "level_id": level_id,
+                "course_id": course_id,
+                "user_file_tree": simple_file_tree,
+                "language": "chinese",
+                "use_cache": True
+            }
+            
+            from agentflow.flow import check_flow
+            
+            flow = check_flow()
+            flow.run(shared)
+            
+            result = shared.get("judgment_result")
+            
+            if not result:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="检查流程未返回结果"
+                )
+            
+            response = LevelCheckResponse(
+                passed=result.get("passed", False),
+                feedback=result.get("feedback", "检查完成"),
+                score=None,
+                suggestions=result.get("suggestions", [])
+            )
+            
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="请提供 user_file_tree + course_id 或 user_answer 参数"
+            )
+        
+        logger.info(f"关卡 {level_id} 检查完成，结果: {'通过' if response.passed else '未通过'}")
+        return response
         
     except HTTPException:
         raise
