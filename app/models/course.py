@@ -13,11 +13,11 @@ class Course(Base):
     __tablename__ = "courses"
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, comment="课程ID")
-    title = Column(String(255), nullable=False, comment="课程标题")
-    tag = Column(String(100), nullable=False, comment="课程标签/范畴")
-    description = Column(Text, comment="课程描述")
-    git_url = Column(String(500), comment="Git仓库链接")
-    image_url = Column(String(500), comment="课程图片URL")
+    title = Column(String(255), nullable=True, comment="课程标题")
+    tag = Column(String(100), nullable=True, comment="课程标签/范畴")
+    description = Column(Text, nullable=True, comment="课程描述")
+    git_url = Column(String(500), nullable=False, comment="Git仓库链接")
+    image_url = Column(String(500), nullable=True, comment="课程图片URL")
     is_completed = Column(Boolean, default=False, nullable=False, comment="创作者是否完成课程创作")
     created_at = Column(TIMESTAMP, server_default=func.now(), comment="创建时间")
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), comment="更新时间")

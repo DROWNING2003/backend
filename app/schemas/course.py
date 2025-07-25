@@ -16,18 +16,18 @@ class LevelSummary(BaseModel):
 
 class CourseCreate(BaseModel):
     """创建课程的请求模式"""
-    title: str = Field(..., min_length=1, max_length=255, description="课程标题")
-    tag: str = Field(..., min_length=1, max_length=100, description="课程标签/范畴")
+    title: Optional[str] = Field(None, min_length=1, max_length=255, description="课程标题")
+    tag: Optional[str] = Field(None, min_length=1, max_length=100, description="课程标签/范畴")
     description: Optional[str] = Field(None, description="课程描述")
-    git_url: str = Field(..., description="Git仓库URL")
+    git_url: str = Field(..., min_length=1, description="Git仓库URL（必填）")
     
     model_config = {
         "json_schema_extra": {
             "example": {
+                "git_url": "https://github.com/example/python-basics",
                 "title": "Python基础编程",
                 "tag": "编程语言",
-                "description": "学习Python编程的基础知识和核心概念",
-                "git_url": "https://github.com/example/python-basics"
+                "description": "学习Python编程的基础知识和核心概念"
             }
         }
     }
@@ -36,10 +36,10 @@ class CourseCreate(BaseModel):
 class CourseResponse(BaseModel):
     """课程响应模式"""
     id: int = Field(..., description="课程ID")
-    title: str = Field(..., description="课程标题")
-    tag: str = Field(..., description="课程标签/范畴")
+    title: Optional[str] = Field(None, description="课程标题")
+    tag: Optional[str] = Field(None, description="课程标签/范畴")
     description: Optional[str] = Field(None, description="课程描述")
-    git_url: Optional[str] = Field(None, description="Git仓库URL")
+    git_url: str = Field(..., description="Git仓库URL")
     image_url: Optional[str] = Field(None, description="课程图片URL")
     is_completed: bool = Field(default=False, description="创作者是否完成课程创作")
     created_at: Optional[datetime] = Field(None, description="创建时间")

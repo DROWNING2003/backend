@@ -63,15 +63,20 @@ class CourseService:
             CourseResponse: 创建的课程信息
         """
         try:
+            # 为可选字段提供默认值
+            title = course_data.title or "未命名课程"
+            tag = course_data.tag or "通用"
+            description = course_data.description or "暂无描述"
+
             # 生成默认图片URL
-            default_image_url = self._generate_default_image_url(course_data.tag)
-            
+            default_image_url = self._generate_default_image_url(tag)
+
             # 创建课程对象
             new_course = Course(
-                title=course_data.title,
-                tag=course_data.tag,
-                description=course_data.description,
-                git_url=course_data.git_url,
+                title=title,
+                tag=tag,
+                description=description,
+                git_url=course_data.git_url,  # 必填字段
                 image_url=default_image_url
             )
             
