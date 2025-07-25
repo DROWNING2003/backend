@@ -207,6 +207,89 @@ async def check_level_completion(
         )
 
 
+@router.post("/check-with-flow", response_model=LevelCheckResponse, summary="使用Flow检查关卡完成状态")
+async def check_level_with_flow(
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    使用AgentFlow检查关卡完成状态
+    
+    功能：
+    - 使用完整的检查流程（包括克隆仓库、获取标准答案等）
+    - 对比用户提交的文件树和标准实现
+    - 提供更准确的AI评判结果
+    
+    参数：
+    - level_id: 关卡ID
+    - course_id: 课程ID
+    - user_file_tree: 用户提交的文件树结构
+    
+    返回：
+    - passed: 是否通过
+    - feedback: 反馈信息
+    - score: 得分(0-100)
+    - suggestions: 改进建议
+    """
+    try:
+        # 验证请求参数
+        level_id = request.get("level_id")
+        course_id = request.get("course_id")
+        user_file_tree = request.get("user_file_tree")
+        
+        if not all([level_id, course_id, user_file_tree]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="缺少必要参数: level_id, course_id, user_file_tree"
+            )
+        
+        logger.info(f"使用Flow检查关卡: 课程ID={course_id}, 关卡ID={level_id}")
+        
+        # 准备共享数据
+        shared = {
+            "level_id": level_id,
+            "course_id": course_id,
+            "user_file_tree": user_file_tree,
+            "language": "chinese",
+            "use_cache": True
+        }
+        
+        # 导入并运行检查流程
+        from agentflow.flow import check_flow
+        
+        flow = check_flow()
+        flow.run(shared)
+        
+        # 获取检查结果
+        result = shared.get("judgment_result")
+        
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="检查流程未返回结果"
+            )
+        
+        # 转换为API响应格式
+        response = LevelCheckResponse(
+            passed=result.get("passed", False),
+            feedback=result.get("feedback", "检查完成"),
+            score=None,  # 不使用score字段
+            suggestions=result.get("suggestions", [])
+        )
+        
+        logger.info(f"Flow检查完成: 关卡{level_id}, 结果={'通过' if response.passed else '未通过'}")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"使用Flow检查关卡失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"使用Flow检查关卡失败: {str(e)}"
+        )
+
+
 @router.post("/generate-from-git", response_model=GeneratedLevelsResponse, summary="基于Git仓库生成关卡")
 async def generate_levels_from_git(request: GenerateLevelsRequest):
     """

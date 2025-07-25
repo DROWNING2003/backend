@@ -365,3 +365,335 @@ class ToLevelConverter(Node):
     def post(self, shared, prep_res, exec_res):
         shared["res"] = exec_res
         return
+
+
+class GetLevelInfoNode(Node):
+    """获取关卡信息节点：从数据库获取关卡要求和描述"""
+    
+    def __init__(self):
+        super().__init__()
+        self.cur_retry = 0
+    
+    def prep(self, shared):
+        level_id = shared.get("level_id")
+        course_id = shared.get("course_id")
+        
+        if not level_id or not course_id:
+            raise ValueError("缺少必要参数：level_id 和 course_id")
+        
+        return level_id, course_id
+    
+    def exec(self, prep_res):
+        level_id, course_id = prep_res
+        
+        try:
+            # 这里需要导入数据库相关模块
+            from app.database.connection import SessionLocal
+            from app.models.level import Level
+            from app.models.course import Course
+            
+            db = SessionLocal()
+            try:
+                # 获取关卡信息
+                level = db.query(Level).filter(
+                    Level.id == level_id,
+                    Level.course_id == course_id
+                ).first()
+                
+                if not level:
+                    raise ValueError(f"未找到关卡 {level_id}")
+                
+                # 获取课程信息
+                course = db.query(Course).filter(Course.id == course_id).first()
+                if not course:
+                    raise ValueError(f"未找到课程 {course_id}")
+                
+                return {
+                    "level": {
+                        "id": level.id,
+                        "title": level.title,
+                        "description": level.description,
+                        "requirements": level.requirements,
+                        "order_number": level.order_number
+                    },
+                    "course": {
+                        "id": course.id,
+                        "title": course.title,
+                        "git_url": course.git_url
+                    }
+                }
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            raise Exception(f"获取关卡信息失败: {str(e)}")
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["level_info"] = exec_res["level"]
+        shared["course_info"] = exec_res["course"]
+        return "default"
+
+
+class CloneRepoNode(Node):
+    """克隆仓库节点：克隆课程仓库并重置到指定提交"""
+    
+    def prep(self, shared):
+        course_info = shared.get("course_info")
+        level_info = shared.get("level_info")
+        
+        if not course_info or not level_info:
+            raise ValueError("缺少课程或关卡信息")
+        
+        git_url = course_info["git_url"]
+        order_number = level_info["order_number"]
+        
+        # 计算提交索引（关卡顺序号 + 1，因为从第2个提交开始）
+        commit_index = order_number + 1
+        
+        return git_url, commit_index
+    
+    def exec(self, prep_res):
+        git_url, commit_index = prep_res
+        
+        try:
+            # 创建临时目录
+            tmpdirname = tempfile.mkdtemp()
+            
+            # 克隆仓库
+            repo = clone_repository(git_url, tmpdirname)
+            
+            # 获取所有提交
+            commits = list(repo.iter_commits(reverse=True))
+            
+            if commit_index > len(commits):
+                raise ValueError(f"提交索引 {commit_index} 超出范围，仓库只有 {len(commits)} 个提交")
+            
+            # 重置到指定提交
+            reset_to_commit(repo, commits, commit_index)
+            
+            return {
+                "repo": repo,
+                "tmpdirname": tmpdirname,
+                "commits": commits,
+                "commit_index": commit_index
+            }
+            
+        except Exception as e:
+            raise Exception(f"克隆仓库失败: {str(e)}")
+    
+    def post(self, shared, prep_res, exec_res):
+        # 将仓库信息存储到shared中，供后续节点使用
+        shared["repo_info"] = exec_res
+        shared["repo"] = exec_res["repo"]
+        shared["tmpdirname"] = exec_res["tmpdirname"]
+        shared["commits"] = exec_res["commits"]
+        shared["commit_index"] = exec_res["commit_index"]
+        return "default"
+
+
+class GetStandardCodeNode(Node):
+    """获取标准答案代码节点：从指定提交获取标准实现代码"""
+    
+    def prep(self, shared):
+        repo_info = shared.get("repo_info")
+        if not repo_info:
+            raise ValueError("缺少仓库信息")
+        
+        tmpdirname = repo_info["tmpdirname"]
+        return tmpdirname
+    
+    def exec(self, prep_res):
+        tmpdirname = prep_res
+        
+        try:
+            # 读取当前提交的所有代码文件
+            result = filter_and_read_files(
+                tmpdirname,
+                max_file_size=1 * 1024 * 1024,
+                include_patterns=get_file_patterns("code"),
+                exclude_patterns=get_exclude_patterns("common")
+            )
+            
+            return result["files"]
+            
+        except Exception as e:
+            raise Exception(f"获取标准代码失败: {str(e)}")
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["standard_code"] = exec_res
+        return "default"
+
+
+class AnalyzeUserCodeNode(Node):
+    """分析用户代码节点：解析用户提交的文件树结构和代码内容"""
+    
+    def prep(self, shared):
+        user_file_tree = shared.get("user_file_tree")
+        if not user_file_tree:
+            raise ValueError("缺少用户文件树数据")
+        
+        return user_file_tree
+    
+    def exec(self, prep_res):
+        user_file_tree = prep_res
+        
+        try:
+            # 解析文件树，提取文件内容
+            user_files = {}
+            
+            def extract_files(node, current_path=""):
+                if node.get("type") == "file":
+                    file_path = node.get("uri", "").replace("file://", "")
+                    if current_path:
+                        relative_path = file_path.replace(current_path, "").lstrip("/")
+                    else:
+                        relative_path = file_path.split("/")[-1]  # 只取文件名
+                    
+                    content = node.get("content", "")
+                    if content:
+                        user_files[relative_path] = content
+                
+                elif node.get("type") == "directory":
+                    children = node.get("children", [])
+                    for child in children:
+                        extract_files(child, current_path)
+            
+            extract_files(user_file_tree)
+            
+            return user_files
+            
+        except Exception as e:
+            raise Exception(f"分析用户代码失败: {str(e)}")
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["user_code"] = exec_res
+        return "default"
+
+
+class CompareAndJudgeNode(Node):
+    """对比判断节点：使用LLM对比用户代码和标准答案，给出评判结果"""
+    
+    def __init__(self):
+        super().__init__()
+        self.cur_retry = 0  # 添加重试计数器
+    
+    def prep(self, shared):
+        level_info = shared.get("level_info")
+        standard_code = shared.get("standard_code")
+        user_code = shared.get("user_code")
+        
+        if not all([level_info, standard_code, user_code]):
+            raise ValueError("缺少必要的对比数据")
+        
+        use_cache = shared.get("use_cache", True)
+        language = shared.get("language", "chinese")
+        
+        return level_info, standard_code, user_code, use_cache, language
+    
+    def exec(self, prep_res):
+        level_info, standard_code, user_code, use_cache, language = prep_res
+        
+        try:
+            # 构建标准代码内容字符串
+            standard_code_str = "\n".join([
+                f"=== {path} ===\n{content}\n"
+                for path, content in standard_code.items()
+            ])
+            
+            # 构建用户代码内容字符串
+            user_code_str = "\n".join([
+                f"=== {path} ===\n{content}\n"
+                for path, content in user_code.items()
+            ])
+            
+            # 构建LLM提示词
+            prompt = f"""
+你是一个编程学习平台的智能评判系统。请根据关卡要求，对比用户提交的代码和标准答案，给出评判结果。
+
+## 关卡信息
+**标题**: {level_info['title']}
+**描述**: {level_info['description']}
+**通过要求**: {level_info['requirements']}
+
+## 标准答案代码
+{standard_code_str}
+
+## 用户提交代码
+{user_code_str}
+
+## 评判要求
+请从以下几个维度进行评判：
+1. **功能完整性**: 用户代码是否实现了关卡要求的功能
+2. **代码正确性**: 语法是否正确，逻辑是否合理
+3. **代码质量**: 代码风格、命名规范等
+4. **创新性**: 是否有独特的实现思路
+
+## 输出格式
+请以JSON格式输出评判结果：
+```json
+{{
+    "passed": true/false,
+    "feedback": "详细的反馈信息，包括做得好的地方和需要改进的地方",
+    "suggestions": [
+        "具体的改进建议1",
+        "具体的改进建议2"
+    ],
+    "praise": "如果通过了，给出鼓励性的话语",
+    "detailed_analysis": {{
+        "functionality": "功能完整性分析",
+        "correctness": "代码正确性分析", 
+        "quality": "代码质量分析",
+        "innovation": "创新性分析"
+    }}
+}}
+```
+
+注意：
+- 如果用户代码基本满足要求，即使有小问题也应该给予通过
+- 反馈要具体、建设性，避免过于严厉
+- 如果通过了要给予鼓励和肯定
+"""
+            
+            # 调用LLM
+            response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0))
+            
+            # 解析JSON响应
+            import json
+            try:
+                # 提取JSON部分
+                if "```json" in response:
+                    json_str = response.split("```json")[1].split("```")[0].strip()
+                else:
+                    json_str = response.strip()
+                
+                result = json.loads(json_str)
+                
+                # 验证必要字段
+                required_fields = ["passed", "feedback"]
+                for field in required_fields:
+                    if field not in result:
+                        raise ValueError(f"缺少必要字段: {field}")
+                
+                return result
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                # 如果JSON解析失败，返回基本结果
+                return {
+                    "passed": False,
+                    "feedback": f"评判系统出现错误，无法解析LLM响应: {str(e)}",
+                    "suggestions": ["请检查代码格式和语法"],
+                    "error": str(e)
+                }
+                
+        except Exception as e:
+            return {
+                "passed": False,
+                "feedback": f"评判过程中出现错误: {str(e)}",
+                "suggestions": ["请稍后重试"],
+                "error": str(e)
+            }
+    
+    def post(self, shared, prep_res, exec_res):
+        shared["judgment_result"] = exec_res
+        return "default"
