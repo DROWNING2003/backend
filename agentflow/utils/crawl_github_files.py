@@ -9,7 +9,7 @@ from typing import Union, Set, Dict  # 类型提示
 
 # 预定义的文件模式配置
 FILE_PATTERNS = {
-    "code": {"*.py", "*.js", "*.ts", "*.java", "*.cpp", "*.c", "*.h", "*.cs", "*.go", "*.rs", "*.php"},
+    "code": {"*.py","*.sol",".md","*.json", "*.yaml", "*.yml", "*.toml", "*.ini", "*.cfg", "*.conf",".env", "*.js", "*.ts", "*.java", "*.cpp", "*.c", "*.h", "*.cs", "*.go", "*.rs", "*.php"},
     "web": {"*.html", "*.css", "*.js", "*.ts", "*.jsx", "*.tsx", "*.vue", "*.scss", "*.sass", "*.less"},
     "docs": {"*.md", "*.txt", "*.rst", "*.doc", "*.docx", "*.pdf"},
     "config": {"*.json", "*.yaml", "*.yml", "*.toml", "*.ini", "*.cfg", "*.conf"},
@@ -122,7 +122,7 @@ def clone_repository(repo_url: str, target_dir: str) -> git.Repo:
         else:
             raise e
 
-def reset_to_commit(repo: git.Repo, commit_index: int = None):
+def reset_to_commit(repo: git.Repo,fullcommits: list[git.Commit], commit_index: int = None):
     """
     将仓库重置到指定的历史提交
     
@@ -137,13 +137,13 @@ def reset_to_commit(repo: git.Repo, commit_index: int = None):
         
     try:
         # 获取所有提交，按时间顺序排列（最早的在前）
-        commits = list(repo.iter_commits(reverse=True))
+        # commits = list(repo.iter_commits(reverse=True))
         
-        if commit_index < 1 or commit_index > len(commits):
-            print(f"提交索引 {commit_index} 超出范围 (1-{len(commits)})")
+        if commit_index < 1 or commit_index > len(fullcommits):
+            print(f"提交索引 {commit_index} 超出范围 (1-{len(fullcommits)})")
             return
             
-        target_commit = commits[commit_index - 1]
+        target_commit = fullcommits[commit_index - 1]
         print(f"重置到第 {commit_index} 个提交: {target_commit.hexsha[:8]} - {target_commit.message.strip()}")
         
         # 重置到指定提交
@@ -446,7 +446,7 @@ def get_commit_changes_detailed(repo: git.Repo, commit_index: int, include_diff_
                     file_info["diff_content"] = "[Binary file diff]"
             
             file_changes.append(file_info)
-        
+        print(file_changes)
         return {
             "commit_info": {
                 "index": commit_index,
@@ -646,7 +646,6 @@ def crawl_github_files_incremental(
         
         # 获取提交变化信息
         changes_info = get_commit_changes(repo, commit_index) if commit_index else None
-        
         # 重置到指定提交
         if commit_index:
             reset_to_commit(repo, commit_index)

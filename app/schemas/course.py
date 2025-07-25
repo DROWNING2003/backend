@@ -16,18 +16,19 @@ class LevelSummary(BaseModel):
 
 class CourseCreate(BaseModel):
     """创建课程的请求模式"""
-    title: str = Field(..., min_length=1, max_length=255, description="课程标题")
-    tag: str = Field(..., min_length=1, max_length=100, description="课程标签/范畴")
-    description: Optional[str] = Field(None, description="课程描述")
-    git_url: str = Field(..., description="Git仓库URL")
+    git_url: str = Field(..., description="Git仓库URL（必填）")
+    title: Optional[str] = Field(..., description="课程标题（可选）")
+    tag: Optional[str] = Field(None, description="课程标签（可选）")
+    description: Optional[str] = Field(None, description="课程描述（可选）")
     
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "title": "Python基础编程",
-                "tag": "编程语言",
-                "description": "学习Python编程的基础知识和核心概念",
-                "git_url": "https://github.com/example/python-basics"
+           "example": {
+                "git_url": "https://github.com/example/repo",
+                # 其他字段默认为null
+                "title": None,
+                "tag": None,
+                "description": None
             }
         }
     }
