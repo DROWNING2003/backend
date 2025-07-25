@@ -3,7 +3,7 @@
 """
 
 from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union
 from datetime import datetime
 
 
@@ -16,16 +16,28 @@ class CourseInfo(BaseModel):
 
 class LevelGetRequest(BaseModel):
     """获取关卡详情的请求模式"""
+    course_id: int = Field(..., description="课程ID")
     level_id: int = Field(..., description="关卡ID")
     
     model_config = {
         "json_schema_extra": {
             "example": {
+                "course_id": 1,
                 "level_id": 1
             }
         }
     }
 
+
+class FileTreeNode(BaseModel):
+    """文件树节点"""
+    type: str = Field(..., description="节点类型: file 或 directory")
+    uri: str = Field(..., description="文件URI")
+    children: Optional[List['FileTreeNode']] = Field(None, description="子节点（仅目录有）")
+    content: Optional[str] = Field(None, description="文件内容（仅文件有）")
+
+# 解决前向引用问题
+FileTreeNode.model_rebuild()
 
 class LevelResponse(BaseModel):
     """关卡详情响应模式"""
@@ -39,6 +51,7 @@ class LevelResponse(BaseModel):
     created_at: Optional[datetime] = Field(None, description="创建时间")
     updated_at: Optional[datetime] = Field(None, description="更新时间")
     course: Optional[CourseInfo] = Field(None, description="所属课程信息")
+    file_tree: Optional[FileTreeNode] = Field(None, description="项目文件树结构")
     
     model_config = {
         "json_schema_extra": {
@@ -56,6 +69,17 @@ class LevelResponse(BaseModel):
                     "id": 1,
                     "title": "Python基础编程",
                     "tag": "编程语言"
+                },
+                "file_tree": {
+                    "type": "directory",
+                    "uri": "file:///project",
+                    "children": [
+                        {
+                            "type": "file",
+                            "uri": "file:///project/main.py",
+                            "content": "print('Hello World')"
+                        }
+                    ]
                 }
             }
         }

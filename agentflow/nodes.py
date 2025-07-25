@@ -1,10 +1,10 @@
 import tempfile
-from utils.yamltool import robust_yaml_parse
-from utils.crawl_github_files import clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, reset_to_commit
-from tools.search import TavilySearchTool
+from agentflow.utils.yamltool import robust_yaml_parse
+from agentflow.utils.crawl_github_files import clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, reset_to_commit
+from agentflow.tools.search import TavilySearchTool
 import yaml
 from pocketflow import Node, BatchNode
-from utils.call_llm import call_llm
+from agentflow.utils.call_llm import call_llm
 
 
 def analyze_results(query, results):
@@ -77,13 +77,8 @@ class SearchNode(Node):
 class IdentifyAbstractions(Node):
     """抽象知识点节点：使用LLM分析代码结构，提取核心知识点,"""
     def prep(self, shared):
+        tmpdirname = shared["tmpdirname"]
         project_name = shared["project_name"]
-        currentIndex = shared["currentIndex"]
-        print("\n1.获取Python文件:")
-        tmpdirname = tempfile.mkdtemp()
-        repo = clone_repository(project_name, tmpdirname)
-        reset_to_commit(repo, currentIndex)
-        shared["repo"] = repo
         result = filter_and_read_files(
             tmpdirname,
             max_file_size=1 * 1024 * 1024,
@@ -97,7 +92,7 @@ class IdentifyAbstractions(Node):
         language = shared.get("language", "chinese")  # 默认为中文输出
         use_cache = shared.get("use_cache", True)  # 默认启用缓存
         max_abstraction_num = shared.get("max_abstraction_num", 5)  # 限制最大概念数量
-
+        print(files)
         # 格式化代码内容供LLM分析
         def create_llm_context(files_data):
             context = ""
@@ -111,6 +106,7 @@ class IdentifyAbstractions(Node):
 
         # 生成LLM所需的上下文和文件列表
         context, file_info = create_llm_context(files)
+        
         file_listing_for_prompt = "\n".join(
             [f"- {idx} # {path}" for idx, path in file_info]
         )
@@ -242,6 +238,7 @@ class ToLevelConverter(Node):
         detailed_changes = get_commit_changes_detailed(repo, currentIndex, include_diff_content=True)
         buffer = []
         buffer.append("\n文件变化详情:")
+        print(detailed_changes)
         for i, file_change in enumerate(detailed_changes['file_changes']):  # 显示所有文件
             # 显示diff内容（如果有）
             if file_change.get('diff_content') and file_change['diff_content'] != "[Binary file diff]":

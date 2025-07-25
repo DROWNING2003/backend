@@ -60,29 +60,24 @@ async def create_course(
     - description: 课程描述
     - git_url: Git仓库URL
     """
-    try:
-        logger.info(f"创建课程请求: {course_data.title}")
+    # try:
+    logger.info(f"创建课程请求: {course_data.git_url}")
         
-        # 验证Git URL格式（简单验证）
-        if not course_data.git_url.startswith(('http://', 'https://')):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Git URL格式不正确，必须以http://或https://开头"
-            )
+
         
-        result = course_service.create_course(db, course_data)
+    result = course_service.create_course(db, course_data)
         
-        logger.info(f"成功创建课程: {result.id} - {result.title}")
-        return result
+        # logger.info(f"成功创建课程: {result.id} - {result.title}")
+    return result
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"创建课程失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"创建课程失败: {str(e)}"
-        )
+    # except HTTPException:
+    #     raise
+    # except Exception as e:
+    #     logger.error(f"创建课程失败: {e}")
+    #     raise HTTPException(
+    #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         detail=f"创建课程失败: {str(e)}"
+    #     )
 
 
 @router.post("/get/{course_id}", response_model=CourseResponse, summary="获取指定课程详情")

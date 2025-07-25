@@ -1,5 +1,7 @@
 from pocketflow import Flow
-from nodes import IdentifyAbstractions, ToLevelConverter
+
+from agentflow.nodes import IdentifyAbstractions, ToLevelConverter
+
 #  repo_url = "https://github.com/zengyi-thinking/auto_mate_test3_call"
 #     shared = {
 #         "currentIndex":6,
