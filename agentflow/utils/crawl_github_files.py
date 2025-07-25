@@ -5,7 +5,93 @@ import git       # 用于Git仓库操作
 import fnmatch   # 用于文件名模式匹配
 import shutil    # 用于文件操作
 import stat      # 用于文件权限操作
+import threading # 用于线程锁
+import time      # 用于时间操作
+import hashlib   # 用于生成哈希值
 from typing import Union, Set, Dict  # 类型提示
+
+# 根据操作系统导入相应的文件锁模块
+try:
+    import fcntl     # 用于文件锁 (Unix/Linux)
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
+
+try:
+    import msvcrt    # 用于文件锁 (Windows)
+    HAS_MSVCRT = True
+except ImportError:
+    HAS_MSVCRT = False
+
+# 全局锁和配置
+_git_operations_lock = threading.RLock()  # 可重入锁，用于git操作
+_temp_base_dir = None  # 公共临时目录
+
+def get_temp_base_dir():
+    """获取或创建公共临时目录"""
+    global _temp_base_dir
+    if _temp_base_dir is None or not os.path.exists(_temp_base_dir):
+        _temp_base_dir = os.path.join(tempfile.gettempdir(), "git_crawl_temp")
+        os.makedirs(_temp_base_dir, exist_ok=True)
+    return _temp_base_dir
+
+def get_repo_hash(repo_url: str) -> str:
+    """根据仓库URL生成唯一哈希值"""
+    return hashlib.md5(repo_url.encode()).hexdigest()[:8]
+
+class FileLock:
+    """跨平台文件锁实现"""
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self.lock_file = file_path + ".lock"
+        self.file_handle = None
+        
+    def __enter__(self):
+        self.acquire()
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+        
+    def acquire(self, timeout: int = 30):
+        """获取文件锁"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                self.file_handle = open(self.lock_file, 'w')
+                if os.name == 'nt' and HAS_MSVCRT:  # Windows
+                    msvcrt.locking(self.file_handle.fileno(), msvcrt.LK_NBLCK, 1)
+                elif HAS_FCNTL:  # Unix/Linux
+                    fcntl.flock(self.file_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    # 如果没有文件锁支持，使用简单的文件存在检查
+                    if os.path.exists(self.lock_file):
+                        raise IOError("Lock file exists")
+                return True
+            except (IOError, OSError):
+                if self.file_handle:
+                    self.file_handle.close()
+                    self.file_handle = None
+                time.sleep(0.1)
+        raise TimeoutError(f"无法在{timeout}秒内获取文件锁: {self.lock_file}")
+        
+    def release(self):
+        """释放文件锁"""
+        if self.file_handle:
+            try:
+                if os.name == 'nt' and HAS_MSVCRT:  # Windows
+                    msvcrt.locking(self.file_handle.fileno(), msvcrt.LK_UNLCK, 1)
+                elif HAS_FCNTL:  # Unix/Linux
+                    fcntl.flock(self.file_handle.fileno(), fcntl.LOCK_UN)
+            except:
+                pass
+            finally:
+                self.file_handle.close()
+                self.file_handle = None
+                try:
+                    os.remove(self.lock_file)
+                except:
+                    pass
 
 # 预定义的文件模式配置
 FILE_PATTERNS = {
@@ -75,8 +161,28 @@ def remove_readonly(func, path, _):
     """
     Windows下删除只读文件的错误处理函数
     """
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+    try:
+        # 尝试修改文件权限
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception as e:
+        # 如果还是失败，尝试强制删除
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+            elif os.path.isdir(path):
+                os.rmdir(path)
+        except:
+            # 最后的尝试：使用系统命令
+            try:
+                if os.name == 'nt':  # Windows
+                    os.system(f'attrib -R "{path}" /S /D')
+                    if os.path.isfile(path):
+                        os.system(f'del /F /Q "{path}"')
+                    elif os.path.isdir(path):
+                        os.system(f'rmdir /S /Q "{path}"')
+            except:
+                pass
 
 def safe_rmtree(path):
     """
@@ -85,13 +191,89 @@ def safe_rmtree(path):
     if os.path.exists(path):
         shutil.rmtree(path, onerror=remove_readonly)
 
-def clone_repository(repo_url: str, target_dir: str) -> git.Repo:
+def cleanup_temp_directories(max_age_hours: int = 24):
     """
-    克隆Git仓库到指定目录
+    清理过期的临时目录
+    
+    参数:
+        max_age_hours (int): 最大保留时间（小时），默认24小时
+    """
+    temp_base = get_temp_base_dir()
+    if not os.path.exists(temp_base):
+        return
+    
+    current_time = time.time()
+    max_age_seconds = max_age_hours * 3600
+    
+    for item in os.listdir(temp_base):
+        item_path = os.path.join(temp_base, item)
+        if os.path.isdir(item_path):
+            try:
+                # 检查目录的修改时间
+                mtime = os.path.getmtime(item_path)
+                if current_time - mtime > max_age_seconds:
+                    print(f"清理过期临时目录: {item_path}")
+                    safe_rmtree(item_path)
+            except Exception as e:
+                print(f"清理临时目录失败 {item_path}: {e}")
+
+def get_temp_directory_info() -> Dict:
+    """
+    获取临时目录使用情况
+    
+    返回:
+        dict: 包含临时目录信息的字典
+    """
+    temp_base = get_temp_base_dir()
+    if not os.path.exists(temp_base):
+        return {"base_dir": temp_base, "exists": False, "directories": []}
+    
+    directories = []
+    total_size = 0
+    
+    for item in os.listdir(temp_base):
+        item_path = os.path.join(temp_base, item)
+        if os.path.isdir(item_path):
+            try:
+                # 计算目录大小
+                dir_size = sum(
+                    os.path.getsize(os.path.join(dirpath, filename))
+                    for dirpath, dirnames, filenames in os.walk(item_path)
+                    for filename in filenames
+                )
+                mtime = os.path.getmtime(item_path)
+                directories.append({
+                    "name": item,
+                    "path": item_path,
+                    "size_bytes": dir_size,
+                    "size_mb": round(dir_size / (1024 * 1024), 2),
+                    "modified_time": time.ctime(mtime),
+                    "age_hours": round((time.time() - mtime) / 3600, 2)
+                })
+                total_size += dir_size
+            except Exception as e:
+                directories.append({
+                    "name": item,
+                    "path": item_path,
+                    "error": str(e)
+                })
+    
+    return {
+        "base_dir": temp_base,
+        "exists": True,
+        "total_directories": len(directories),
+        "total_size_bytes": total_size,
+        "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "directories": directories
+    }
+
+def get_or_clone_repository(repo_url: str, target_dir: str = None) -> git.Repo:
+    """
+    获取或克隆Git仓库到指定目录（线程安全，同一项目共享目录）
     
     参数:
         repo_url (str): Git仓库URL (SSH或HTTPS格式)
-        target_dir (str): 目标目录路径
+        target_dir (str, 可选): 目标目录路径，如果为None则使用基于仓库哈希的共享目录
         
     返回:
         git.Repo: Git仓库对象
@@ -99,35 +281,68 @@ def clone_repository(repo_url: str, target_dir: str) -> git.Repo:
     异常:
         Exception: 克隆失败时抛出异常
     """
-    print(f"克隆仓库 {repo_url} 到目录 {target_dir} ...")
-    try:
-        repo = git.Repo.clone_from(repo_url, target_dir)
-        print("克隆成功！")
-        return repo
-    except Exception as e:
-        print(f"克隆仓库出错: {e}")
-        # 如果是SSH失败，尝试转换为HTTPS URL
-        if "git@github.com:" in repo_url and ("Connection closed" in str(e) or "exit code(128)" in str(e)):
-            https_url = repo_url.replace("git@github.com:", "https://github.com/")
-            if not https_url.endswith('.git'):
-                https_url += '.git'
-            print(f"SSH连接失败，尝试使用HTTPS: {https_url}")
+    with _git_operations_lock:
+        # 如果没有指定目标目录，使用基于仓库哈希的共享目录
+        if target_dir is None:
+            repo_hash = get_repo_hash(repo_url)
+            target_dir = os.path.join(get_temp_base_dir(), f"shared_repo_{repo_hash}")
+        
+        # 使用文件锁确保目录操作的原子性
+        with FileLock(target_dir):
+            # 如果目录已存在且是有效的git仓库，直接使用
+            if os.path.exists(target_dir):
+                try:
+                    repo = git.Repo(target_dir)
+                    # 验证远程URL是否匹配
+                    if repo.remotes.origin.url == repo_url or repo.remotes.origin.url.replace('.git', '') == repo_url.replace('.git', ''):
+                        print(f"使用已存在的仓库目录: {target_dir}")
+                        # 更新到最新状态
+                        repo.remotes.origin.fetch()
+                        return repo
+                    else:
+                        print(f"远程URL不匹配，重新克隆...")
+                        safe_rmtree(target_dir)
+                except Exception as e:
+                    print(f"现有目录无效，重新克隆: {e}")
+                    safe_rmtree(target_dir)
+            
+            print(f"克隆仓库 {repo_url} 到目录 {target_dir} ...")
+            
             try:
-                repo = git.Repo.clone_from(https_url, target_dir)
-                print("HTTPS克隆成功！")
+                # 创建目录
+                os.makedirs(target_dir, exist_ok=True)
+                
+                repo = git.Repo.clone_from(repo_url, target_dir)
+                print("克隆成功！")
                 return repo
-            except Exception as e2:
-                print(f"HTTPS克隆也失败: {e2}")
-                raise e2
-        else:
-            raise e
+            except Exception as e:
+                print(f"克隆仓库出错: {e}")
+                # 如果是SSH失败，尝试转换为HTTPS URL
+                if "git@github.com:" in repo_url and ("Connection closed" in str(e) or "exit code(128)" in str(e)):
+                    https_url = repo_url.replace("git@github.com:", "https://github.com/")
+                    if not https_url.endswith('.git'):
+                        https_url += '.git'
+                    print(f"SSH连接失败，尝试使用HTTPS: {https_url}")
+                    try:
+                        repo = git.Repo.clone_from(https_url, target_dir)
+                        print("HTTPS克隆成功！")
+                        return repo
+                    except Exception as e2:
+                        print(f"HTTPS克隆也失败: {e2}")
+                        raise e2
+                else:
+                    raise e
 
-def reset_to_commit(repo: git.Repo,fullcommits: list[git.Commit], commit_index: int = None):
+# 保持向后兼容性的别名
+clone_repository = get_or_clone_repository
+
+def reset_to_commit(repo: git.Repo, fullcommits: list[git.Commit], commit_index: int = None):
     """
-    将仓库重置到指定的历史提交
+    将仓库重置到指定的历史提交（线程安全）
     
     参数:
         repo (git.Repo): Git仓库对象
+        fullcommits (list[git.Commit]): 完整的提交列表
         commit_index (int, 可选): 提交索引，1表示最早的提交，2表示第二早的提交，以此类推
                                  如果为None，则保持当前状态
     """
@@ -135,24 +350,25 @@ def reset_to_commit(repo: git.Repo,fullcommits: list[git.Commit], commit_index: 
         print("未指定提交索引，保持当前状态")
         return
         
-    try:
-        # 获取所有提交，按时间顺序排列（最早的在前）
-        # commits = list(repo.iter_commits(reverse=True))
-        
-        if commit_index < 1 or commit_index > len(fullcommits):
-            print(f"提交索引 {commit_index} 超出范围 (1-{len(fullcommits)})")
-            return
-            
-        target_commit = fullcommits[commit_index - 1]
-        print(f"重置到第 {commit_index} 个提交: {target_commit.hexsha[:8]} - {target_commit.message.strip()}")
-        
-        # 重置到指定提交
-        repo.git.reset('--hard', target_commit.hexsha)
-        print("重置成功！")
-        
-    except Exception as e:
-        print(f"重置到提交失败: {e}")
-        raise e
+    with _git_operations_lock:
+        # 使用仓库目录的文件锁
+        repo_dir = repo.working_dir
+        with FileLock(repo_dir):
+            try:
+                if commit_index < 1 or commit_index > len(fullcommits):
+                    print(f"提交索引 {commit_index} 超出范围 (1-{len(fullcommits)})")
+                    return
+                    
+                target_commit = fullcommits[commit_index - 1]
+                print(f"重置到第 {commit_index} 个提交: {target_commit.hexsha[:8]} - {target_commit.message.strip()}")
+                
+                # 重置到指定提交
+                repo.git.reset('--hard', target_commit.hexsha)
+                print("重置成功！")
+                
+            except Exception as e:
+                print(f"重置到提交失败: {e}")
+                raise e
 
 def filter_and_read_files(
     repo_dir: str,
@@ -550,7 +766,7 @@ def get_commit_changes(repo: git.Repo, commit_index: int) -> Dict:
 
 def get_repository_commits(repo_url: str, max_commits: int = 20) -> Dict:
     """
-    获取Git仓库的提交列表
+    获取Git仓库的提交列表（线程安全，使用共享目录）
     
     参数:
         repo_url (str): Git仓库URL (SSH或HTTPS格式)
@@ -559,11 +775,9 @@ def get_repository_commits(repo_url: str, max_commits: int = 20) -> Dict:
     返回:
         dict: 包含提交列表的字典
     """
-    # 创建临时目录并手动管理清理
-    tmpdirname = tempfile.mkdtemp()
     try:
-        # 克隆仓库
-        repo = clone_repository(repo_url, tmpdirname)
+        # 使用共享目录获取或克隆仓库
+        repo = get_or_clone_repository(repo_url)
         
         # 获取提交列表
         result = get_commit_list(repo, max_commits)
@@ -577,16 +791,10 @@ def get_repository_commits(repo_url: str, max_commits: int = 20) -> Dict:
             "total_commits": 0,
             "showing": 0
         }
-    finally:
-        # 手动清理临时目录，处理Windows权限问题
-        try:
-            safe_rmtree(tmpdirname)
-        except Exception as cleanup_error:
-            print(f"清理临时目录时出错: {cleanup_error}")
 
 def get_repository_commit_changes(repo_url: str, commit_index: int, include_diff_content: bool = True) -> Dict:
     """
-    直接从仓库URL获取指定提交的详细变化信息
+    直接从仓库URL获取指定提交的详细变化信息（线程安全，使用共享目录）
     
     参数:
         repo_url (str): Git仓库URL (SSH或HTTPS格式)
@@ -596,11 +804,9 @@ def get_repository_commit_changes(repo_url: str, commit_index: int, include_diff
     返回:
         dict: 包含详细变化信息的字典
     """
-    # 创建临时目录并手动管理清理
-    tmpdirname = tempfile.mkdtemp()
     try:
-        # 克隆仓库
-        repo = clone_repository(repo_url, tmpdirname)
+        # 使用共享目录获取或克隆仓库
+        repo = get_or_clone_repository(repo_url)
         
         # 获取详细变化信息
         result = get_commit_changes_detailed(repo, commit_index, include_diff_content)
@@ -609,12 +815,6 @@ def get_repository_commit_changes(repo_url: str, commit_index: int, include_diff
         
     except Exception as e:
         return {"error": f"获取提交变化失败: {e}"}
-    finally:
-        # 手动清理临时目录，处理Windows权限问题
-        try:
-            safe_rmtree(tmpdirname)
-        except Exception as cleanup_error:
-            print(f"清理临时目录时出错: {cleanup_error}")
 
 def crawl_github_files_incremental(
     repo_url: str,
@@ -625,7 +825,7 @@ def crawl_github_files_incremental(
     only_changed_files: bool = False
 ) -> Dict:
     """
-    通过本地克隆从Git仓库爬取文件，支持增量获取指定提交的变化
+    通过本地克隆从Git仓库爬取文件，支持增量获取指定提交的变化（线程安全，使用共享目录）
     
     参数:
         repo_url (str): Git仓库URL (SSH或HTTPS格式)
@@ -638,17 +838,19 @@ def crawl_github_files_incremental(
     返回:
         dict: 包含文件、变化信息和统计信息的字典
     """
-    # 创建临时目录并手动管理清理
-    tmpdirname = tempfile.mkdtemp()
     try:
-        # 克隆仓库
-        repo = clone_repository(repo_url, tmpdirname)
+        # 使用共享目录获取或克隆仓库
+        repo = get_or_clone_repository(repo_url)
+        
+        # 获取所有提交列表
+        fullcommits = list(repo.iter_commits(reverse=True))
         
         # 获取提交变化信息
         changes_info = get_commit_changes(repo, commit_index) if commit_index else None
+        
         # 重置到指定提交
         if commit_index:
-            reset_to_commit(repo, commit_index)
+            reset_to_commit(repo, fullcommits, commit_index)
         
         # 如果只需要变化的文件，则过滤文件列表
         target_files = None
@@ -660,7 +862,7 @@ def crawl_github_files_incremental(
         
         # 过滤并读取文件
         result = filter_and_read_files(
-            tmpdirname,
+            repo.working_dir,
             max_file_size=max_file_size,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns,
@@ -682,12 +884,6 @@ def crawl_github_files_incremental(
                 "skipped_count": 0
             }
         }
-    finally:
-        # 手动清理临时目录，处理Windows权限问题
-        try:
-            safe_rmtree(tmpdirname)
-        except Exception as cleanup_error:
-            print(f"清理临时目录时出错: {cleanup_error}")
 
 def crawl_github_files(
     repo_url: str,
@@ -697,7 +893,7 @@ def crawl_github_files(
     exclude_patterns: Union[str, Set[str]] = None
 ) -> Dict:
     """
-    通过本地克隆从Git仓库爬取文件（支持GitHub等平台的SSH/HTTPS URL）
+    通过本地克隆从Git仓库爬取文件（支持GitHub等平台的SSH/HTTPS URL，线程安全，使用共享目录）
 
     参数:
         repo_url (str): Git仓库URL (SSH或HTTPS格式)
@@ -709,19 +905,20 @@ def crawl_github_files(
     返回:
         dict: 包含文件和统计信息的字典
     """
-    # 创建临时目录并手动管理清理
-    tmpdirname = tempfile.mkdtemp()
     try:
-        # 克隆仓库
-        repo = clone_repository(repo_url, tmpdirname)
+        # 使用共享目录获取或克隆仓库
+        repo = get_or_clone_repository(repo_url)
+        
+        # 获取所有提交列表
+        fullcommits = list(repo.iter_commits(reverse=True))
         
         # 根据传参回到指定的commit
         if commit_index:
-            reset_to_commit(repo, commit_index)
+            reset_to_commit(repo, fullcommits, commit_index)
         
         # 过滤并读取文件
         result = filter_and_read_files(
-            tmpdirname,
+            repo.working_dir,
             max_file_size=max_file_size,
             include_patterns=include_patterns,
             exclude_patterns=exclude_patterns
@@ -738,12 +935,6 @@ def crawl_github_files(
                 "skipped_count": 0
             }
         }
-    finally:
-        # 手动清理临时目录，处理Windows权限问题
-        try:
-            safe_rmtree(tmpdirname)
-        except Exception as cleanup_error:
-            print(f"清理临时目录时出错: {cleanup_error}")
 
 # 示例用法
 if __name__ == "__main__":
@@ -755,11 +946,11 @@ if __name__ == "__main__":
     
     # 方式1: 使用预定义模式
     print("\n1. 使用预定义模式 - 只获取Python文件:")
-    tmpdirname = tempfile.mkdtemp()
-    repo = clone_repository(repo_url, tmpdirname)
-    reset_to_commit(repo, currentIndex)
+    repo = get_or_clone_repository(repo_url)
+    fullcommits = list(repo.iter_commits(reverse=True))
+    reset_to_commit(repo, fullcommits, currentIndex)
     result = filter_and_read_files(
-            tmpdirname,
+            repo.working_dir,
             max_file_size=1 * 1024 * 1024,
             include_patterns=get_file_patterns("code"),  # 预定义Python模式
             exclude_patterns=get_exclude_patterns("common")  # 排除常见无用文件

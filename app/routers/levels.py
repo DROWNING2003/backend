@@ -41,7 +41,7 @@ async def get_level(
     """
     import tempfile
     from agentflow.utils.crawl_github_files import (
-        clone_repository, reset_to_commit, filter_and_read_files, 
+        clone_repository, get_or_clone_repository, reset_to_commit, filter_and_read_files, 
         get_file_patterns, get_exclude_patterns
     )
     from app.utils.file_tree_builder import build_file_tree_from_files, sort_file_tree
@@ -85,11 +85,8 @@ async def get_level(
         file_tree = None
         
         try:
-            # 创建临时目录
-            tmpdirname = tempfile.mkdtemp()
-            
-            # 克隆仓库
-            repo = clone_repository(course.git_url, tmpdirname)
+            # 使用共享目录获取或克隆仓库
+            repo = get_or_clone_repository(course.git_url)
             
             # 计算提交索引（关卡顺序号 + 1，因为从第2个提交开始）
             current_index = level_result.order_number + 1

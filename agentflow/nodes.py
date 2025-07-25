@@ -1,6 +1,6 @@
 import tempfile
 from agentflow.utils.yamltool import robust_yaml_parse
-from agentflow.utils.crawl_github_files import clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, reset_to_commit
+from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, reset_to_commit
 from agentflow.tools.search import TavilySearchTool
 import yaml
 from pocketflow import Node, BatchNode
@@ -457,11 +457,8 @@ class CloneRepoNode(Node):
         git_url, commit_index = prep_res
         
         try:
-            # 创建临时目录
-            tmpdirname = tempfile.mkdtemp()
-            
-            # 克隆仓库
-            repo = clone_repository(git_url, tmpdirname)
+            # 使用共享目录获取或克隆仓库
+            repo = get_or_clone_repository(git_url)
             
             # 获取所有提交
             commits = list(repo.iter_commits(reverse=True))

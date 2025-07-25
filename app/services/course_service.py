@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 import logging
 from app.models.level import Level
 from agentflow.flow import create_flow
-from agentflow.utils.crawl_github_files import clone_repository, reset_to_commit
+from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, reset_to_commit
 from app.models.course import Course
 from app.schemas.course import CourseCreate, CourseResponse, CourseListResponse
 from app.services.ai_service import AIService
@@ -417,10 +417,9 @@ class CourseService:
             if not course:
                 raise Exception(f"课程 {course_id} 不存在")
             
-            # 克隆仓库
+            # 使用共享目录获取或克隆仓库
             repo_url = git_url
-            tmpdirname = tempfile.mkdtemp()
-            repo = clone_repository(repo_url, tmpdirname)
+            repo = get_or_clone_repository(repo_url)
             commits = list(repo.iter_commits(reverse=True))
             
             logger.info(f"成功克隆仓库，共找到 {len(commits)} 个提交")
