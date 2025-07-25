@@ -16,7 +16,7 @@ def main():
     print("\n1. 使用预定义模式 - 只获取Python文件:")
     tmpdirname = tempfile.mkdtemp()
     repo = clone_repository(repo_url, tmpdirname)
-    reset_to_commit(repo, 3)
+    reset_to_commit(repo, 7)
     result = filter_and_read_files(
             tmpdirname,
             max_file_size=1 * 1024 * 1024,

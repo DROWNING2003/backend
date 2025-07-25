@@ -262,6 +262,7 @@ class ToLevelConverter(Node):
   description: |
     ▸ 知识点介绍
     ▸ 简单例子
+    ▸ 语法说明
     ▸ 简洁明了
   requirements: |
     ▸ 把代码通过语言描述
@@ -299,17 +300,22 @@ class ToLevelConverter(Node):
 ```
 """
         response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0))
-        return results
+        # --- Validation ---
+        yaml_str = response.strip().split("```yaml")[1].split("```")[0].strip()
+        Level_raw = yaml.safe_load(yaml_str)
+        if not isinstance(Level_raw, list):
+            raise ValueError("LLM output is not a list")
+        print("__________________输出_______________________")
+        print(Level_raw)
+        return Level_raw
     
     def post(self, shared, prep_res, exec_res):
         """Save the search results and go back to the decision node."""
         # Add the search results to the context in the shared store
-        previous = shared.get("context", "")
-        shared["context"] = previous + "\n\nSEARCH: " + shared["search_query"] + "\nRESULTS: " + exec_res
+        # previous = shared.get("context", "")
+        # shared["context"] = previous + "\n\nSEARCH: " + shared["search_query"] + "\nRESULTS: " + exec_res
         
-        print(f"📚 Found information, analyzing results...")
+        # print(f"📚 Found information, analyzing results...")
         
         # Always go back to the decision node after searching
-        return "decide"
-    
-# class DecideAction(Node):
+        return
