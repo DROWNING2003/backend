@@ -144,23 +144,6 @@ class CourseService:
         """
         # 开启事务
         try:
-<<<<<<< HEAD
-            # 为可选字段提供默认值
-            title = course_data.title or "未命名课程"
-            tag = course_data.tag or "通用"
-            description = course_data.description or "暂无描述"
-
-            # 生成默认图片URL
-            default_image_url = self._generate_default_image_url(tag)
-
-            # 创建课程对象
-            new_course = Course(
-                title=title,
-                tag=tag,
-                description=description,
-                git_url=course_data.git_url,  # 必填字段
-                image_url=default_image_url
-=======
             # 创建课程对象
             new_course = Course(
                 title=course_data.title,
@@ -168,7 +151,6 @@ class CourseService:
                 description=course_data.description,
                 git_url=course_data.git_url,
                 is_completed=False  # 设置为未完成，表示正在生成
->>>>>>> 35a12e01a68bfae6aad53581a0f4f72a80b6101b
             )
             
             # 保存到数据库
