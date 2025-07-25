@@ -3,7 +3,7 @@
 """
 
 import logging
-from app.database.connection import check_database_connection, create_tables
+from app.database.connection import check_database_connection, create_tables, engine
 from app.models import Course, Level
 
 # 配置日志
@@ -27,26 +27,58 @@ def main():
         if create_tables():
             logger.info("✅ 数据表创建成功")
             
-            # 显示表结构信息
+            # 显示实际的表结构信息
             logger.info("📋 数据表结构:")
-            logger.info("  - courses: 课程表")
-            logger.info("    * id (主键)")
-            logger.info("    * title (课程标题)")
-            logger.info("    * tag (课程标签)")
-            logger.info("    * description (课程描述)")
-            logger.info("    * git_url (Git仓库链接)")
-            logger.info("    * image_url (课程图片URL)")
-            logger.info("    * created_at, updated_at (时间戳)")
-            
-            logger.info("  - levels: 关卡表")
-            logger.info("    * id (主键)")
-            logger.info("    * course_id (外键)")
-            logger.info("    * title (关卡标题)")
-            logger.info("    * description (关卡描述)")
-            logger.info("    * requirements (通过要求)")
-            logger.info("    * order_number (关卡顺序号)")
-            logger.info("    * content (关卡具体内容)")
-            logger.info("    * created_at, updated_at (时间戳)")
+
+            # 显示courses表结构
+            from sqlalchemy import text
+            with engine.connect() as conn:
+                result = conn.execute(text("DESCRIBE courses"))
+                courses_columns = result.fetchall()
+                logger.info("  - courses: 课程表")
+                for col in courses_columns:
+                    comment = ""
+                    if col[0] == "id":
+                        comment = " (主键)"
+                    elif col[0] == "title":
+                        comment = " (课程标题)"
+                    elif col[0] == "tag":
+                        comment = " (课程标签)"
+                    elif col[0] == "description":
+                        comment = " (课程描述)"
+                    elif col[0] == "git_url":
+                        comment = " (Git仓库链接)"
+                    elif col[0] == "image_url":
+                        comment = " (课程图片URL)"
+                    elif col[0] == "is_completed":
+                        comment = " (创作者是否完成课程创作)"
+                    elif col[0] in ["created_at", "updated_at"]:
+                        comment = " (时间戳)"
+                    logger.info(f"    * {col[0]} ({col[1]}){comment}")
+
+                # 显示levels表结构
+                result = conn.execute(text("DESCRIBE levels"))
+                levels_columns = result.fetchall()
+                logger.info("  - levels: 关卡表")
+                for col in levels_columns:
+                    comment = ""
+                    if col[0] == "id":
+                        comment = " (主键)"
+                    elif col[0] == "course_id":
+                        comment = " (外键，关联courses.id)"
+                    elif col[0] == "title":
+                        comment = " (关卡标题)"
+                    elif col[0] == "description":
+                        comment = " (关卡描述)"
+                    elif col[0] == "requirements":
+                        comment = " (通过要求)"
+                    elif col[0] == "order_number":
+                        comment = " (关卡顺序号)"
+                    elif col[0] == "content":
+                        comment = " (关卡具体内容，JSON格式)"
+                    elif col[0] in ["created_at", "updated_at"]:
+                        comment = " (时间戳)"
+                    logger.info(f"    * {col[0]} ({col[1]}){comment}")
             
             logger.info("🎉 数据库初始化完成！")
             return True

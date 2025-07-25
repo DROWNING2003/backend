@@ -2,7 +2,7 @@
 课程数据模型
 """
 
-from sqlalchemy import Column, Integer, String, Text, TIMESTAMP, func
+from sqlalchemy import Column, Integer, String, Text, TIMESTAMP, Boolean, func
 from sqlalchemy.orm import relationship
 from app.database.connection import Base
 
@@ -18,6 +18,7 @@ class Course(Base):
     description = Column(Text, comment="课程描述")
     git_url = Column(String(500), comment="Git仓库链接")
     image_url = Column(String(500), comment="课程图片URL")
+    is_completed = Column(Boolean, default=False, nullable=False, comment="创作者是否完成课程创作")
     created_at = Column(TIMESTAMP, server_default=func.now(), comment="创建时间")
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now(), comment="更新时间")
     
@@ -36,6 +37,7 @@ class Course(Base):
             "description": self.description,
             "git_url": self.git_url,
             "image_url": self.image_url,
+            "is_completed": self.is_completed,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
@@ -51,4 +53,5 @@ class Course(Base):
             }
             for level in sorted(self.levels, key=lambda x: x.order_number)
         ]
+        course_dict["total_levels"] = len(self.levels)
         return course_dict
