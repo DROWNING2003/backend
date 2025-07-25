@@ -1,274 +1,196 @@
 """
-任务进度管理相关API路由
+关卡管理API路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
-from datetime import datetime
 import logging
 
 from app.database.connection import get_db
-from app.models import UserProgress, Tutorial, UserAchievement
+from app.schemas.level import (
+    LevelGetRequest, LevelResponse, LevelCheckRequest, LevelCheckResponse,
+    GenerateLevelsRequest, GeneratedLevelsResponse
+)
+from app.services.level_service import LevelService
+from app.services.ai_service import AIService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+level_service = LevelService()
+ai_service = AIService()
 
 
-# 请求Schema
-class GetProgressRequest(BaseModel):
-    """获取进度请求"""
-    user_id: str = Field(..., description="用户ID")
-    tutorial_id: Optional[int] = Field(None, description="教程ID，不传则获取所有")
-
-
-class UpdateProgressRequest(BaseModel):
-    """更新进度请求"""
-    user_id: str = Field(..., description="用户ID")
-    tutorial_id: int = Field(..., description="教程ID")
-    chapter_id: Optional[int] = Field(None, description="章节ID")
-    progress_data: Dict[str, Any] = Field(..., description="进度数据")
-
-
-class CreateProgressRequest(BaseModel):
-    """创建进度请求"""
-    user_id: str = Field(..., description="用户ID")
-    tutorial_id: int = Field(..., description="教程ID")
-    initial_data: Optional[Dict[str, Any]] = Field({}, description="初始数据")
-
-
-@router.post("/progress/get")
-async def get_user_progress(
-    request: GetProgressRequest,
+@router.post("/get", response_model=LevelResponse, summary="获取指定关卡详细内容")
+async def get_level(
+    request: LevelGetRequest,
     db: Session = Depends(get_db)
 ):
     """
-    获取用户学习进度
+    获取指定关卡的详细内容
+    
+    参数：
+    - level_id: 关卡ID
+    
+    返回：
+    - 关卡的完整信息（标题、描述、通过要求、顺序号、所属课程信息等）
     """
     try:
-        query = db.query(UserProgress).filter(UserProgress.user_id == request.user_id)
-
-        if request.tutorial_id:
-            query = query.filter(UserProgress.tutorial_id == request.tutorial_id)
-
-        progresses = query.all()
-
-        result = []
-        for progress in progresses:
-            # 获取教程信息
-            tutorial = db.query(Tutorial).filter(Tutorial.id == progress.tutorial_id).first()
-
-            # 从extra_data中获取章节进度
-            chapter_progresses = []
-            if progress.extra_data and 'chapters' in progress.extra_data:
-                for chapter_id, chapter_data in progress.extra_data['chapters'].items():
-                    chapter_progresses.append({
-                        "chapter_id": int(chapter_id),
-                        "status": chapter_data.get('status', 'not_started'),
-                        "score": chapter_data.get('score', 0.0),
-                        "time_spent": chapter_data.get('time_spent', 0),
-                        "attempts": chapter_data.get('attempts', 0),
-                        "started_at": chapter_data.get('started_at'),
-                        "completed_at": chapter_data.get('completed_at'),
-                        "updated_at": chapter_data.get('updated_at')
-                    })
-
-            result.append({
-                "id": progress.id,
-                "user_id": progress.user_id,
-                "tutorial_id": progress.tutorial_id,
-                "tutorial_title": tutorial.title if tutorial else "未知教程",
-                "status": progress.status,
-                "progress_percentage": progress.progress_percentage,
-                "current_step": progress.current_step,
-                "total_time_spent": progress.total_time_spent,
-                "score": progress.score,
-                "started_at": progress.started_at,
-                "last_accessed_at": progress.last_accessed_at,
-                "completed_at": progress.completed_at,
-                "created_at": progress.created_at,
-                "updated_at": progress.updated_at,
-                "chapter_progresses": chapter_progresses,
-                "extra_data": progress.extra_data
-            })
-
-        return {
-            "success": True,
-            "user_id": request.user_id,
-            "total": len(result),
-            "progresses": result
-        }
-
+        logger.info(f"获取关卡详情请求: {request.level_id}")
+        
+        result = level_service.get_level_by_id(db, request.level_id)
+        
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"关卡 {request.level_id} 不存在"
+            )
+        
+        logger.info(f"成功获取关卡详情: {request.level_id}")
+        return result
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"获取用户进度失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/progress/create")
-async def create_user_progress(
-    request: CreateProgressRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    创建用户学习进度
-    """
-    try:
-        # 检查教程是否存在
-        tutorial = db.query(Tutorial).filter(Tutorial.id == request.tutorial_id).first()
-        if not tutorial:
-            raise HTTPException(status_code=404, detail="教程不存在")
-
-        # 检查是否已存在进度
-        existing_progress = db.query(UserProgress).filter(
-            UserProgress.user_id == request.user_id,
-            UserProgress.tutorial_id == request.tutorial_id
-        ).first()
-
-        if existing_progress:
-            return {
-                "success": True,
-                "message": "进度已存在",
-                "progress_id": existing_progress.id,
-                "status": existing_progress.status
-            }
-
-        # 创建新进度
-        progress = UserProgress(
-            user_id=request.user_id,
-            tutorial_id=request.tutorial_id,
-            status="not_started",
-            progress_percentage=0.0,
-            current_step=None,
-            total_time_spent=0,
-            score=0.0,
-            extra_data={"created_from": "api", "initial_data": request.initial_data},
-            started_at=datetime.utcnow()
+        logger.error(f"获取关卡详情失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取关卡详情失败: {str(e)}"
         )
 
-        db.add(progress)
-        db.commit()
-        db.refresh(progress)
 
-        return {
-            "success": True,
-            "message": "进度创建成功",
-            "progress_id": progress.id,
-            "tutorial_title": tutorial.title
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"创建用户进度失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/progress/update")
-async def update_user_progress(
-    request: UpdateProgressRequest,
+@router.post("/check-completion", response_model=LevelCheckResponse, summary="检查关卡完成状态")
+async def check_level_completion(
+    request: LevelCheckRequest,
     db: Session = Depends(get_db)
 ):
     """
-    更新用户学习进度
+    检查关卡完成状态
+    
+    功能：
+    - AI审查用户提交的内容
+    - 直接返回是否通过（无需在数据库中存储完成标记）
+    - 提供详细的反馈和改进建议
+    
+    参数：
+    - level_id: 关卡ID
+    - user_answer: 用户提交的答案/代码
+    
+    返回：
+    - passed: 是否通过
+    - feedback: 反馈信息
+    - score: 得分(0-100)
+    - suggestions: 改进建议
     """
     try:
-        # 获取用户进度
-        progress = db.query(UserProgress).filter(
-            UserProgress.user_id == request.user_id,
-            UserProgress.tutorial_id == request.tutorial_id
-        ).first()
-
-        if not progress:
-            raise HTTPException(status_code=404, detail="用户进度不存在")
-
-        # 更新进度数据
-        progress_data = request.progress_data
-
-        if "status" in progress_data:
-            progress.status = progress_data["status"]
-        if "progress_percentage" in progress_data:
-            progress.progress_percentage = progress_data["progress_percentage"]
-        if "current_step" in progress_data:
-            progress.current_step = progress_data["current_step"]
-        if "total_time_spent" in progress_data:
-            progress.total_time_spent = progress_data["total_time_spent"]
-        if "score" in progress_data:
-            progress.score = progress_data["score"]
-
-        # 更新章节进度（如果提供）
-        if request.chapter_id and "chapter_progress" in progress_data:
-            chapter_data = progress_data["chapter_progress"]
-            progress.update_chapter_progress(request.chapter_id, chapter_data)
-
-        # 更新扩展数据
-        if "extra_data" in progress_data:
-            if not progress.extra_data:
-                progress.extra_data = {}
-            progress.extra_data.update(progress_data["extra_data"])
-            # 标记为已修改
-            progress.extra_data = dict(progress.extra_data)
-
-        progress.last_accessed_at = datetime.utcnow()
-
-        # 如果是完成状态，设置完成时间
-        if progress.status == "completed" and not progress.completed_at:
-            progress.completed_at = datetime.utcnow()
-
-        db.commit()
-
-        return {
-            "success": True,
-            "message": "进度更新成功",
-            "progress_id": progress.id,
-            "status": progress.status,
-            "progress_percentage": progress.progress_percentage
-        }
-
+        logger.info(f"检查关卡完成状态请求: {request.level_id}")
+        
+        # 验证用户答案不能为空
+        if not request.user_answer.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="用户答案不能为空"
+            )
+        
+        result = level_service.check_level_completion(
+            db, request.level_id, request.user_answer
+        )
+        
+        logger.info(f"关卡 {request.level_id} 检查完成，结果: {'通过' if result.passed else '未通过'}")
+        return result
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"更新用户进度失败: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"检查关卡完成状态失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"检查关卡完成状态失败: {str(e)}"
+        )
 
 
-@router.post("/progress/delete")
-async def delete_user_progress(
-    request: dict,
-    db: Session = Depends(get_db)
-):
+@router.post("/generate-from-git", response_model=GeneratedLevelsResponse, summary="基于Git仓库生成关卡")
+async def generate_levels_from_git(request: GenerateLevelsRequest):
     """
-    删除用户学习进度
+    基于Git仓库生成关卡
+    
+    功能：
+    - 调用agentflow中的AI服务
+    - 自动分析Git仓库内容
+    - 生成适合的关卡内容和要求
+    
+    参数：
+    - git_url: Git仓库URL
+    - project_name: 项目名称（可选）
+    - language: 输出语言（默认中文）
+    - max_levels: 最大关卡数量（1-20）
+    
+    返回：
+    - success: 是否成功
+    - levels: 生成的关卡列表
+    - message: 处理消息
+    - total_levels: 生成的关卡总数
     """
     try:
-        user_id = request.get("user_id")
-        tutorial_id = request.get("tutorial_id")
-
-        if not user_id or not tutorial_id:
-            raise HTTPException(status_code=400, detail="user_id和tutorial_id参数必需")
-
-        # 获取用户进度
-        progress = db.query(UserProgress).filter(
-            UserProgress.user_id == user_id,
-            UserProgress.tutorial_id == tutorial_id
-        ).first()
-
-        if not progress:
-            raise HTTPException(status_code=404, detail="用户进度不存在")
-
-        # 在新的精简结构中，章节进度存储在metadata中，无需单独删除
-        # 直接删除用户进度
-        db.delete(progress)
-        db.commit()
-
-        return {
-            "success": True,
-            "message": "进度删除成功"
-        }
-
+        logger.info(f"生成关卡请求: {request.git_url}")
+        
+        # 验证Git URL格式
+        if not request.git_url.startswith(('http://', 'https://')):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Git URL格式不正确，必须以http://或https://开头"
+            )
+        
+        result = ai_service.generate_levels_from_git(
+            git_url=request.git_url,
+            project_name=request.project_name,
+            max_levels=request.max_levels
+        )
+        
+        logger.info(f"关卡生成完成: {result.total_levels} 个关卡")
+        return result
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"删除用户进度失败: {e}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"生成关卡失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"生成关卡失败: {str(e)}"
+        )
+
+
+@router.post("/get-generated", response_model=dict, summary="获取AI生成的关卡结果")
+async def get_generated_levels():
+    """
+    获取AI生成的关卡结果
+    
+    返回：
+    - 树形结构的关卡数据（对象数组格式）
+    - 每个关卡的详细描述
+    - AI服务状态信息
+    """
+    try:
+        logger.info("获取AI生成关卡结果请求")
+        
+        # 获取AI服务状态
+        ai_status = await ai_service.get_generated_levels_status()
+        
+        result = {
+            "ai_service_status": ai_status,
+            "message": "AI关卡生成服务就绪",
+            "available_features": [
+                "基于Git仓库分析生成关卡",
+                "智能代码审查和反馈",
+                "自适应难度调整"
+            ]
+        }
+        
+        logger.info("成功获取AI生成关卡结果")
+        return result
+        
+    except Exception as e:
+        logger.error(f"获取AI生成关卡结果失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取AI生成关卡结果失败: {str(e)}"
+        )

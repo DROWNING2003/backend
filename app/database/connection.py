@@ -1,99 +1,85 @@
 """
 数据库连接配置
-使用SQLAlchemy连接MySQL数据库
 """
 
 import os
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import QueuePool
+from sqlalchemy import create_engine, MetaData
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 import logging
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# 从环境变量获取数据库配置
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "mysql+pymysql://root:Zhuqing5201314@localhost:3306/auto_mate"
-)
+# 数据库配置
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:Zhuqing5201314@localhost:3306/auto_mate")
+DATABASE_ECHO = os.getenv("DATABASE_ECHO", "false").lower() == "true"
 
 # 创建数据库引擎
 try:
     engine = create_engine(
         DATABASE_URL,
-        poolclass=QueuePool,
-        pool_size=10,
-        max_overflow=20,
+        echo=DATABASE_ECHO,
         pool_pre_ping=True,
-        pool_recycle=3600,
-        echo=os.getenv("DATABASE_ECHO", "false").lower() == "true"
+        pool_recycle=300,
+        pool_size=10,
+        max_overflow=20
     )
     logger.info("数据库引擎创建成功")
 except Exception as e:
     logger.error(f"数据库引擎创建失败: {e}")
-    # 创建一个空的引擎作为备用
-    engine = None
-
-# 创建会话工厂
-if engine:
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-else:
-    SessionLocal = None
+    raise
 
 # 创建基础模型类
 Base = declarative_base()
 
+# 创建会话工厂
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-def get_database_url():
-    """
-    获取数据库连接URL
-    """
-    return DATABASE_URL
+# 元数据
+metadata = MetaData()
 
 
 def get_db():
     """
     获取数据库会话
-    用于依赖注入
     """
-    if not SessionLocal:
-        logger.error("数据库会话工厂未初始化")
-        raise Exception("数据库连接不可用")
-
     db = SessionLocal()
     try:
         yield db
-    except Exception as e:
-        logger.error(f"数据库会话错误: {str(e)}")
-        db.rollback()
-        raise
     finally:
         db.close()
 
 
-def init_db():
+def check_database_connection() -> bool:
     """
-    初始化数据库
-    创建所有表
+    检查数据库连接是否正常
+    """
+    try:
+        from sqlalchemy import text
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        logger.info("数据库连接检查成功")
+        return True
+    except SQLAlchemyError as e:
+        logger.error(f"数据库连接检查失败: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"数据库连接检查异常: {e}")
+        return False
+
+
+def create_tables():
+    """
+    创建所有数据表
     """
     try:
         Base.metadata.create_all(bind=engine)
-        logger.info("数据库表创建成功")
-    except Exception as e:
-        logger.error(f"数据库初始化失败: {str(e)}")
-        raise
-
-
-def check_db_connection():
-    """
-    检查数据库连接状态
-    """
-    try:
-        with engine.connect() as connection:
-            connection.execute("SELECT 1")
-        logger.info("数据库连接正常")
+        logger.info("数据表创建成功")
         return True
     except Exception as e:
-        logger.error(f"数据库连接失败: {str(e)}")
+        logger.error(f"数据表创建失败: {e}")
         return False

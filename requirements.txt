@@ -49,3 +49,18 @@ python-dateutil>=2.8.0
 
 # JSON处理
 orjson>=3.9.0
+
+# TEN Framework相关依赖
+websockets>=12.0
+asyncio-mqtt>=0.16.0
+aiortc>=1.6.0
+aiohttp>=3.9.0
+
+# 实时通信和WebRTC
+python-socketio>=5.10.0
+eventlet>=0.33.0
+
+# 音频处理
+pydub>=0.25.0
+numpy>=1.24.0
+scipy>=1.11.0

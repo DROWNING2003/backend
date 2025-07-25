@@ -1,157 +1,123 @@
 """
-课程管理相关API路由
+课程管理API路由
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
 import logging
+
 from app.database.connection import get_db
-from app.models.course import Course
-from app.schemas.course import (
-    CourseResponse, CourseCreate, CourseUpdate, CourseListResponse
-)
+from app.schemas.course import CourseCreate, CourseResponse, CourseListResponse
+from app.services.course_service import CourseService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+course_service = CourseService()
 
 
-@router.post("/courses", response_model=CourseListResponse)
-async def get_courses(
-    request: dict = {},
+@router.post("/list", response_model=CourseListResponse, summary="获取所有课程列表")
+async def list_courses(db: Session = Depends(get_db)):
+    """
+    获取所有课程列表
+    
+    返回所有课程的基本信息，包括：
+    - 课程ID、标题、标签、描述
+    - 默认图片URL
+    - 该课程包含的关卡列表（关卡ID、标题、顺序号）
+    """
+    try:
+        logger.info("获取课程列表请求")
+        
+        result = course_service.get_all_courses(db)
+        
+        logger.info(f"成功获取 {result.total} 个课程")
+        return result
+        
+    except Exception as e:
+        logger.error(f"获取课程列表失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取课程列表失败: {str(e)}"
+        )
+
+
+@router.post("/create", response_model=CourseResponse, summary="创建新课程")
+async def create_course(
+    course_data: CourseCreate,
     db: Session = Depends(get_db)
 ):
     """
-    获取课程列表
+    创建新课程
+    
+    功能：
+    - 创建课程记录并自动生成唯一ID
+    - 生成默认图片URL
+    - 调用AI服务自动生成关卡并与课程建立外键关联
+    
+    参数：
+    - title: 课程标题
+    - tag: 课程标签/范畴
+    - description: 课程描述
+    - git_url: Git仓库URL
     """
     try:
-        # 从请求体中获取参数
-        skip = request.get("skip", 0)
-        limit = request.get("limit", 100)
-        is_published = request.get("is_published", None)
-        search = request.get("search", None)
-
-        query = db.query(Course)
-
-        # 筛选条件（移除level_id筛选）
-
-        if is_published is not None:
-            query = query.filter(Course.is_published == is_published)
-
-        if search:
-            search_pattern = f"%{search}%"
-            query = query.filter(
-                Course.title.like(search_pattern) |
-                Course.description.like(search_pattern)
+        logger.info(f"创建课程请求: {course_data.title}")
+        
+        # 验证Git URL格式（简单验证）
+        if not course_data.git_url.startswith(('http://', 'https://')):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Git URL格式不正确，必须以http://或https://开头"
             )
         
-        # 获取总数
-        total = query.count()
+        result = course_service.create_course(db, course_data)
         
-        # 获取课程列表
-        courses = query.order_by(Course.created_at.desc()).offset(skip).limit(limit).all()
+        logger.info(f"成功创建课程: {result.id} - {result.title}")
+        return result
         
-        response = CourseListResponse(
-            courses=courses,
-            total=total,
-            page=skip // limit + 1,
-            size=limit
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建课程失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"创建课程失败: {str(e)}"
         )
-        
-        logger.info(f"成功获取课程列表，共{len(courses)}条记录")
-        return response
-    
-    except Exception as e:
-        logger.error(f"获取课程列表失败: {str(e)}")
-        raise HTTPException(status_code=500, detail="获取课程列表失败")
 
 
-@router.post("/courses/detail", response_model=CourseResponse)
-async def get_course(request: dict, db: Session = Depends(get_db)):
-    """
-    根据ID获取特定课程信息
-    """
-    try:
-        course_id = request.get("course_id")
-        if not course_id:
-            raise HTTPException(status_code=400, detail="course_id参数必需")
-
-        course = db.query(Course).filter(Course.id == course_id).first()
-        
-        if not course:
-            raise HTTPException(status_code=404, detail="课程不存在")
-        
-        logger.info(f"成功获取课程信息: {course.title}")
-        return course
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"获取课程信息失败: {str(e)}")
-        raise HTTPException(status_code=500, detail="获取课程信息失败")
-
-
-@router.post("/courses/create", response_model=CourseResponse)
-async def create_course(course: CourseCreate, db: Session = Depends(get_db)):
-    """
-    创建新课程（管理员功能）
-    """
-    try:
-        # 检查课程标题是否已存在
-        existing_course = db.query(Course).filter(Course.title == course.title).first()
-        if existing_course:
-            raise HTTPException(status_code=400, detail="课程标题已存在")
-        
-        db_course = Course(**course.dict())
-        db.add(db_course)
-        db.commit()
-        db.refresh(db_course)
-        
-        logger.info(f"成功创建课程: {db_course.title}")
-        return db_course
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"创建课程失败: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="创建课程失败")
-
-
-@router.post("/courses/update", response_model=CourseResponse)
-async def update_course(
-    request: dict,
+@router.post("/get/{course_id}", response_model=CourseResponse, summary="获取指定课程详情")
+async def get_course(
+    course_id: int,
     db: Session = Depends(get_db)
 ):
     """
-    更新课程信息（管理员功能）
+    获取指定课程的详细信息
+    
+    参数：
+    - course_id: 课程ID
+    
+    返回：
+    - 课程的完整信息，包括关卡列表
     """
     try:
-        course_id = request.get("course_id")
-        if not course_id:
-            raise HTTPException(status_code=400, detail="course_id参数必需")
-
-        course_update_data = request.get("course_update", {})
-
-        course = db.query(Course).filter(Course.id == course_id).first()
-
-        if not course:
-            raise HTTPException(status_code=404, detail="课程不存在")
-
-        # 更新课程信息
-        for field, value in course_update_data.items():
-            if hasattr(course, field):
-                setattr(course, field, value)
+        logger.info(f"获取课程详情请求: {course_id}")
         
-        db.commit()
-        db.refresh(course)
+        result = course_service.get_course_by_id(db, course_id)
         
-        logger.info(f"成功更新课程: {course.title}")
-        return course
-    
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"课程 {course_id} 不存在"
+            )
+        
+        logger.info(f"成功获取课程详情: {course_id}")
+        return result
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"更新课程失败: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="更新课程失败")
+        logger.error(f"获取课程详情失败: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取课程详情失败: {str(e)}"
+        )

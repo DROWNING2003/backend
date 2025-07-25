@@ -1,53 +1,91 @@
 """
-课程相关Pydantic Schema
+课程相关的数据验证模式
 """
 
 from pydantic import BaseModel, Field, HttpUrl
-from typing import Optional, List
+from typing import List, Optional
 from datetime import datetime
 
 
-class CourseBase(BaseModel):
-    """课程基础Schema"""
-    title: str = Field(..., min_length=1, max_length=200, description="课程标题")
+class LevelSummary(BaseModel):
+    """关卡摘要信息"""
+    id: int = Field(..., description="关卡ID")
+    title: str = Field(..., description="关卡标题")
+    order_number: int = Field(..., description="关卡顺序号")
+
+
+class CourseCreate(BaseModel):
+    """创建课程的请求模式"""
+    title: str = Field(..., min_length=1, max_length=255, description="课程标题")
+    tag: str = Field(..., min_length=1, max_length=100, description="课程标签/范畴")
     description: Optional[str] = Field(None, description="课程描述")
-    github_url: Optional[str] = Field(None, description="GitHub仓库URL")
-
-    difficulty: int = Field(1, ge=1, le=10, description="课程难度(1-10)")
-    estimated_time: Optional[int] = Field(None, ge=0, description="预估学习时间(分钟)")
-    is_published: bool = Field(False, description="是否发布")
-
-
-class CourseCreate(CourseBase):
-    """创建课程Schema"""
-    pass
-
-
-class CourseUpdate(BaseModel):
-    """更新课程Schema"""
-    title: Optional[str] = Field(None, min_length=1, max_length=200, description="课程标题")
-    description: Optional[str] = Field(None, description="课程描述")
-    github_url: Optional[str] = Field(None, description="GitHub仓库URL")
-
-    difficulty: Optional[int] = Field(None, ge=1, le=10, description="课程难度(1-10)")
-    estimated_time: Optional[int] = Field(None, ge=0, description="预估学习时间(分钟)")
-    is_published: Optional[bool] = Field(None, description="是否发布")
+    git_url: str = Field(..., description="Git仓库URL")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "title": "Python基础编程",
+                "tag": "编程语言",
+                "description": "学习Python编程的基础知识和核心概念",
+                "git_url": "https://github.com/example/python-basics"
+            }
+        }
+    }
 
 
-class CourseResponse(CourseBase):
-    """课程响应Schema"""
+class CourseResponse(BaseModel):
+    """课程响应模式"""
     id: int = Field(..., description="课程ID")
-    created_at: datetime = Field(..., description="创建时间")
+    title: str = Field(..., description="课程标题")
+    tag: str = Field(..., description="课程标签/范畴")
+    description: Optional[str] = Field(None, description="课程描述")
+    git_url: Optional[str] = Field(None, description="Git仓库URL")
+    image_url: Optional[str] = Field(None, description="课程图片URL")
+    created_at: Optional[datetime] = Field(None, description="创建时间")
     updated_at: Optional[datetime] = Field(None, description="更新时间")
-
-
-    class Config:
-        from_attributes = True
+    levels: List[LevelSummary] = Field(default=[], description="关卡列表")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "title": "Python基础编程",
+                "tag": "编程语言",
+                "description": "学习Python编程的基础知识和核心概念",
+                "git_url": "https://github.com/example/python-basics",
+                "image_url": "https://example.com/images/python-course.jpg",
+                "created_at": "2024-01-01T12:00:00",
+                "updated_at": "2024-01-01T12:00:00",
+                "levels": [
+                    {"id": 1, "title": "变量和数据类型", "order_number": 1},
+                    {"id": 2, "title": "控制流程", "order_number": 2}
+                ]
+            }
+        }
+    }
 
 
 class CourseListResponse(BaseModel):
-    """课程列表响应Schema"""
+    """课程列表响应模式"""
     courses: List[CourseResponse] = Field(..., description="课程列表")
-    total: int = Field(..., description="总数量")
-    page: int = Field(..., description="当前页码")
-    size: int = Field(..., description="每页大小")
+    total: int = Field(..., description="课程总数")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "courses": [
+                    {
+                        "id": 1,
+                        "title": "Python基础编程",
+                        "tag": "编程语言",
+                        "description": "学习Python编程的基础知识",
+                        "image_url": "https://example.com/images/python.jpg",
+                        "levels": [
+                            {"id": 1, "title": "变量和数据类型", "order_number": 1}
+                        ]
+                    }
+                ],
+                "total": 1
+            }
+        }
+    }

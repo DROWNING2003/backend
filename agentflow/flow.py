@@ -1,5 +1,5 @@
 from pocketflow import Flow
-from nodes import IdentifyAbstractions, ToLevelConverter
+from .nodes import IdentifyAbstractions, ToLevelConverter
 
 def create_flow() -> Flow:
     identifyAbstractions = IdentifyAbstractions()
