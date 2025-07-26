@@ -2,7 +2,7 @@ import os
 import tempfile
 from dotenv import load_dotenv
 from flow import create_flow
-from agentflow.utils.crawl_github_files import clone_repository, filter_and_read_files, get_commit_changes, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, reset_to_commit
+from agentflow.utils.crawl_github_files import clone_repository, filter_and_read_files, get_commit_changes, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, checkout_to_commit
 # Load environment variables from .env file
 load_dotenv()
 

@@ -1,6 +1,6 @@
 import tempfile
 from agentflow.utils.yamltool import robust_yaml_parse
-from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, reset_to_commit
+from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, checkout_to_commit
 from agentflow.tools.search import TavilySearchTool
 import yaml
 from pocketflow import Node, BatchNode
@@ -302,7 +302,7 @@ class ToLevelConverter(Node):
 ### 输出格式要求
 ```yaml
   name: |
-    关卡主题 {name_lang_hint}
+    关卡主题(8字以内) {name_lang_hint}
   description: |
     ▸ 知识点介绍
     ▸ 简单例子
@@ -458,20 +458,25 @@ class CloneRepoNode(Node):
         
         try:
             # 使用共享目录获取或克隆仓库
-            repo = get_or_clone_repository(git_url)
+            repo = get_or_clone_repository(git_url,update_to_latest=False)
             
             # 获取所有提交
             commits = list(repo.iter_commits(reverse=True))
             
+            # 验证并调整提交索引
             if commit_index > len(commits):
-                raise ValueError(f"提交索引 {commit_index} 超出范围，仓库只有 {len(commits)} 个提交")
+                print(f"警告: 提交索引 {commit_index} 超出范围，仓库只有 {len(commits)} 个提交，使用最后一个提交")
+                commit_index = len(commits)
+            elif commit_index < 1:
+                print(f"警告: 提交索引 {commit_index} 无效，使用第一个提交")
+                commit_index = 1
             
-            # 重置到指定提交
-            reset_to_commit(repo, commits, commit_index)
+            # 切换到指定提交
+            checkout_to_commit(repo, commit_index)
             
             return {
                 "repo": repo,
-                "tmpdirname": tmpdirname,
+                "tmpdirname": repo.working_dir,
                 "commits": commits,
                 "commit_index": commit_index
             }
