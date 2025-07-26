@@ -267,13 +267,14 @@ def get_temp_directory_info() -> Dict:
         "directories": directories
     }
 
-def get_or_clone_repository(repo_url: str, target_dir: str = None) -> git.Repo:
+def get_or_clone_repository(repo_url: str, target_dir: str = None, update_to_latest: bool = True) -> git.Repo:
     """
     获取或克隆Git仓库到指定目录（线程安全，同一项目共享目录）
     
     参数:
         repo_url (str): Git仓库URL (SSH或HTTPS格式)
         target_dir (str, 可选): 目标目录路径，如果为None则使用基于仓库哈希的共享目录
+        update_to_latest (bool, 可选): 是否更新仓库到最新状态，默认True
         
     返回:
         git.Repo: Git仓库对象
@@ -296,9 +297,42 @@ def get_or_clone_repository(repo_url: str, target_dir: str = None) -> git.Repo:
                     # 验证远程URL是否匹配
                     if repo.remotes.origin.url == repo_url or repo.remotes.origin.url.replace('.git', '') == repo_url.replace('.git', ''):
                         print(f"使用已存在的仓库目录: {target_dir}")
-                        # 更新到最新状态
-                        repo.remotes.origin.fetch()
-                        return repo
+                        
+                        # 根据参数决定是否更新到最新状态
+                        if update_to_latest:
+                            # 更新到最新状态（使用安全的方式）
+                            try:
+                                print("正在更新仓库到最新状态...")
+                                repo.remotes.origin.fetch()
+                                
+                                # 获取默认分支名称
+                                try:
+                                    default_branch = repo.active_branch.name
+                                except:
+                                    # 如果当前在分离HEAD状态，获取默认分支
+                                    default_branch = 'main' if 'main' in [ref.name.split('/')[-1] for ref in repo.remotes.origin.refs] else 'master'
+                                
+                                # 安全地切换到最新状态，不使用reset --hard
+                                print(f"切换到远程 {default_branch} 分支的最新状态...")
+                                
+                                # 清理工作目录
+                                if repo.is_dirty():
+                                    repo.git.clean('-fd')
+                                    repo.git.checkout('--', '.')
+                                
+                                # 切换到远程分支的最新提交
+                                repo.git.checkout(f'origin/{default_branch}', force=True)
+                                print(f"✅ 已更新到远程 {default_branch} 分支的最新状态")
+                                
+                            except Exception as update_error:
+                                print(f"更新仓库失败，将重新克隆: {update_error}")
+                                safe_rmtree(target_dir)
+                                # 继续执行重新克隆的逻辑
+                            else:
+                                return repo
+                        else:
+                            print("跳过仓库更新，使用现有状态")
+                            return repo
                     else:
                         print(f"远程URL不匹配，重新克隆...")
                         safe_rmtree(target_dir)
@@ -336,15 +370,20 @@ def get_or_clone_repository(repo_url: str, target_dir: str = None) -> git.Repo:
 # 保持向后兼容性的别名
 clone_repository = get_or_clone_repository
 
-def reset_to_commit(repo: git.Repo, fullcommits: list[git.Commit], commit_index: int = None):
+def checkout_to_commit(repo: git.Repo, commit_index: int = None):
     """
-    将仓库重置到指定的历史提交（线程安全）
+    将仓库切换到指定的历史提交（线程安全，使用checkout创建代码快照）
     
     参数:
         repo (git.Repo): Git仓库对象
-        fullcommits (list[git.Commit]): 完整的提交列表
         commit_index (int, 可选): 提交索引，1表示最早的提交，2表示第二早的提交，以此类推
                                  如果为None，则保持当前状态
+    
+    注意:
+        - 使用 git checkout 而非 git reset，避免在共享仓库中丢失提交
+        - 会进入分离HEAD状态，这是安全的快照模式
+        - 不会影响原始分支的提交历史
+        - 提交列表会在函数内部从repo对象获取，无需外部传递
     """
     if commit_index is None:
         print("未指定提交索引，保持当前状态")
@@ -355,20 +394,115 @@ def reset_to_commit(repo: git.Repo, fullcommits: list[git.Commit], commit_index:
         repo_dir = repo.working_dir
         with FileLock(repo_dir):
             try:
-                if commit_index < 1 or commit_index > len(fullcommits):
-                    print(f"提交索引 {commit_index} 超出范围 (1-{len(fullcommits)})")
+                # 从repo对象获取提交列表（按时间顺序，最早的在前）
+                # 确保从主分支获取完整的提交历史，而不是当前HEAD
+                commits = None
+                
+                # 尝试多种方式获取完整的提交历史
+                for branch_ref in ['origin/main', 'origin/master', 'main', 'master']:
+                    try:
+                        commits = list(repo.iter_commits(branch_ref, reverse=True))
+                        print(f"从 {branch_ref} 获取到 {len(commits)} 个提交")
+                        break
+                    except Exception as e:
+                        print(f"尝试从 {branch_ref} 获取提交失败: {e}")
+                        continue
+                
+                # 如果所有分支都失败，尝试从所有引用获取
+                if commits is None:
+                    try:
+                        commits = list(repo.iter_commits('--all', reverse=True))
+                        print(f"从所有引用获取到 {len(commits)} 个提交")
+                    except Exception as e:
+                        print(f"从所有引用获取提交失败: {e}")
+                        # 最后尝试从当前HEAD获取（可能在分离HEAD状态下只有部分历史）
+                        commits = list(repo.iter_commits(reverse=True))
+                        print(f"从当前HEAD获取到 {len(commits)} 个提交（可能不完整）")
+                
+                if commit_index < 1 or commit_index > len(commits):
+                    print(f"提交索引 {commit_index} 超出范围 (1-{len(commits)})")
                     return
                     
-                target_commit = fullcommits[commit_index - 1]
-                print(f"重置到第 {commit_index} 个提交: {target_commit.hexsha[:8]} - {target_commit.message.strip()}")
+                target_commit = commits[commit_index - 1]
+                print(f"切换到第 {commit_index} 个提交: {target_commit.hexsha[:8]} - {target_commit.message.strip()}")
                 
-                # 重置到指定提交
-                repo.git.reset('--hard', target_commit.hexsha)
-                print("重置成功！")
+                # 确保工作目录是干净的
+                if repo.is_dirty():
+                    print("工作目录有未提交的更改，正在清理...")
+                    repo.git.reset('--hard', 'HEAD')
+                    repo.git.clean('-fd')
+                
+                # 使用checkout切换到指定提交（分离HEAD状态，不影响分支历史）
+                # 这会创建该提交的代码快照，而不会修改任何分支
+                repo.git.checkout(target_commit.hexsha, force=True)
+                
+                # 验证切换是否成功
+                current_commit = repo.head.commit
+                if current_commit.hexsha == target_commit.hexsha:
+                    print(f"✅ 成功切换到提交快照: {target_commit.hexsha[:8]}")
+                    print(f"   当前处于分离HEAD状态，这是安全的快照模式")
+                else:
+                    print(f"⚠️  切换可能未完全成功，当前提交: {current_commit.hexsha[:8]}")
                 
             except Exception as e:
-                print(f"重置到提交失败: {e}")
+                print(f"切换到提交失败: {e}")
+                # 尝试恢复到主分支
+                try:
+                    print("尝试恢复到主分支...")
+                    repo.git.checkout('HEAD')
+                except:
+                    pass
                 raise e
+
+def checkout_to_commit_legacy(repo: git.Repo, fullcommits: list[git.Commit], commit_index: int = None):
+    """
+    向后兼容的checkout_to_commit函数（已废弃，请使用新版本）
+    
+    参数:
+        repo (git.Repo): Git仓库对象
+        fullcommits (list[git.Commit]): 完整的提交列表（已忽略，从repo获取）
+        commit_index (int, 可选): 提交索引
+    """
+    print("⚠️  使用了已废弃的checkout_to_commit_legacy函数，建议使用新版本")
+    return checkout_to_commit(repo, commit_index)
+
+# 向后兼容别名
+reset_to_commit = checkout_to_commit
+
+def get_full_commit_history(repo: git.Repo) -> list:
+    """
+    获取仓库的完整提交历史（不受当前HEAD状态影响）
+    
+    参数:
+        repo (git.Repo): Git仓库对象
+        
+    返回:
+        list: 按时间顺序排列的提交列表（最早的在前）
+    """
+    commits = None
+    
+    # 尝试多种方式获取完整的提交历史
+    for branch_ref in ['origin/main', 'origin/master', 'main', 'master']:
+        try:
+            commits = list(repo.iter_commits(branch_ref, reverse=True))
+            print(f"从 {branch_ref} 获取到完整提交历史: {len(commits)} 个提交")
+            break
+        except Exception as e:
+            print(f"尝试从 {branch_ref} 获取提交失败: {e}")
+            continue
+    
+    # 如果所有分支都失败，尝试从所有引用获取
+    if commits is None:
+        try:
+            commits = list(repo.iter_commits('--all', reverse=True))
+            print(f"从所有引用获取到完整提交历史: {len(commits)} 个提交")
+        except Exception as e:
+            print(f"从所有引用获取提交失败: {e}")
+            # 最后尝试从当前HEAD获取（可能不完整）
+            commits = list(repo.iter_commits(reverse=True))
+            print(f"从当前HEAD获取到提交历史: {len(commits)} 个提交（可能不完整）")
+    
+    return commits if commits else []
 
 def filter_and_read_files(
     repo_dir: str,
@@ -848,9 +982,9 @@ def crawl_github_files_incremental(
         # 获取提交变化信息
         changes_info = get_commit_changes(repo, commit_index) if commit_index else None
         
-        # 重置到指定提交
+        # 切换到指定提交
         if commit_index:
-            reset_to_commit(repo, fullcommits, commit_index)
+            checkout_to_commit(repo, commit_index)
         
         # 如果只需要变化的文件，则过滤文件列表
         target_files = None
@@ -912,9 +1046,9 @@ def crawl_github_files(
         # 获取所有提交列表
         fullcommits = list(repo.iter_commits(reverse=True))
         
-        # 根据传参回到指定的commit
+        # 根据传参切换到指定的commit
         if commit_index:
-            reset_to_commit(repo, fullcommits, commit_index)
+            checkout_to_commit(repo, commit_index)
         
         # 过滤并读取文件
         result = filter_and_read_files(
@@ -948,7 +1082,7 @@ if __name__ == "__main__":
     print("\n1. 使用预定义模式 - 只获取Python文件:")
     repo = get_or_clone_repository(repo_url)
     fullcommits = list(repo.iter_commits(reverse=True))
-    reset_to_commit(repo, fullcommits, currentIndex)
+    checkout_to_commit(repo, currentIndex)
     result = filter_and_read_files(
             repo.working_dir,
             max_file_size=1 * 1024 * 1024,

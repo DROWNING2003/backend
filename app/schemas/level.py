@@ -18,12 +18,14 @@ class LevelGetRequest(BaseModel):
     """获取关卡详情的请求模式"""
     course_id: int = Field(..., description="课程ID")
     level_id: int = Field(..., description="关卡ID")
+    update_to_latest: bool = Field(default=True, description="是否更新仓库到最新状态")
     
     model_config = {
         "json_schema_extra": {
             "example": {
                 "course_id": 1,
-                "level_id": 1
+                "level_id": 1,
+                "update_to_latest": True
             }
         }
     }
