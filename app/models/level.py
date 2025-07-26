@@ -14,6 +14,7 @@ class Level(Base):
     
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, comment="关卡ID")
     course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, comment="所属课程ID")
+    commit_id = Column(Integer, nullable=True, comment="commit_id")
     title = Column(String(255), nullable=False, comment="关卡标题")
     description = Column(Text, comment="关卡描述")
     requirements = Column(Text, nullable=False, comment="通过要求")
@@ -26,13 +27,14 @@ class Level(Base):
     course = relationship("Course", back_populates="levels")
     
     def __repr__(self):
-        return f"<Level(id={self.id}, title='{self.title}', course_id={self.course_id}, order={self.order_number})>"
+        return f"<Level(id={self.id}, title='{self.title}', course_id={self.course_id},commit_id={self.commit_id}, order={self.order_number})>"
     
     def to_dict(self):
         """转换为字典格式"""
         return {
             "id": self.id,
             "course_id": self.course_id,
+            "commit_id": self.commit_id,
             "title": self.title,
             "description": self.description,
             "requirements": self.requirements,

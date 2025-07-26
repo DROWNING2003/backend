@@ -45,6 +45,7 @@ class LevelResponse(BaseModel):
     """关卡详情响应模式"""
     id: int = Field(..., description="关卡ID")
     course_id: int = Field(..., description="所属课程ID")
+    commit_id: int = Field(..., description="所属commitID")
     title: str = Field(..., description="关卡标题")
     description: Optional[str] = Field(None, description="关卡描述")
     requirements: str = Field(..., description="通过要求")

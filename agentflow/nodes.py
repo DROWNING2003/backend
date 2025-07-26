@@ -4,7 +4,7 @@ from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_re
 from agentflow.tools.search import TavilySearchTool
 import yaml
 from pocketflow import Node, BatchNode
-from agentflow.utils.call_llm import call_llm
+from agentflow.utils.call_llm import call_llm,call_MiniMax_llm
 
 
 def analyze_results(query, results):
@@ -173,8 +173,8 @@ class IdentifyAbstractions(Node):
     - 0 # 文件路径示例.py"""
 
         # 调用LLM并处理响应
-        response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0))
-        
+        response = call_MiniMax_llm(prompt)
+        print(response)
         # 提取和验证YAML响应
         yaml_str = response.split("```yaml")[1].split("```")[0].strip()
         abstractions = yaml.safe_load(yaml_str)
@@ -348,7 +348,7 @@ class ToLevelConverter(Node):
 2.代码块必须用三重反引号明确闭合
 3.避免在YAML中使用未转义的特殊符号
 """  
-        response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0))
+        response = call_MiniMax_llm(prompt)
         # --- Validation ---
         print(response)
         # yaml_str = response.strip().split("```yaml")[1].split("```")[0].strip()
@@ -657,6 +657,7 @@ class CompareAndJudgeNode(Node):
 - 如果通过了要给予鼓励和肯定
 """
             
+            print(prompt)
             # 调用LLM
             response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0))
             

@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import logging
 from app.models.level import Level
-from agentflow.flow import create_flow
+from agentflow.flow import create_adaptive_flow, create_flow
 from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, checkout_to_commit, get_full_commit_history
 from app.models.course import Course
 from app.schemas.course import CourseCreate, CourseResponse, CourseListResponse
@@ -427,69 +427,64 @@ class CourseService:
             
             # 生成关卡
             generated_count = 0
-            for i in range(2, len(commits) + 1):
+            i = 1 
+            cur_inx = 2
+            while cur_inx < len(commits):
+                
                 try:
-                    logger.info(f"正在生成第 {i-1} 个关卡 (提交 {i}/{len(commits)})")
+                    logger.info(f"正在生成第 {i} 个关卡 (提交 {cur_inx}/{len(commits)})")
                     
                     shared = {
-                        "fullcommits": commits,
-                        "currentIndex": i,
-                        "language": "中文",
-                        "use_cache": True,
-                        "max_abstraction_num": 5,
-                        "project_name": repo_url, 
-                        "repo": repo,
-                        "tmpdirname": tmpdirname,
+                    "accumulated_changes":[],#累计差异
+                    "fullcommits": commits,
+                    "max_commits_to_check":3, #最多commit
+                    "commits_to_check":1, #当前累计commit
+                    "tmpdirname": tmpdirname,
+                    "project_name": repo_url,
+                    "currentIndex": cur_inx,  # 从较早的提交开始测试
+                    "repo": repo,
+                    "language": "中文",
+                    "use_cache": True,
+                    "max_abstraction_num": 5,
                     }
+        
                     
-                    checkout_to_commit(repo, commit_index=i)
-                    flow = create_flow()
+                    checkout_to_commit(repo, commit_index=cur_inx)
+                    flow = create_adaptive_flow()
                     flow.run(shared)
-                    
-                    if shared.get("res") and len(shared["res"]) > 0:
+                    cur_inx = shared["currentIndex"]
+                    i+=1
+                    print("res",shared["res"])
+                    if shared["res"] and len(shared["res"]) > 0:
                         level_data = shared["res"][0]
-                        
                         # 创建关卡对象
                         new_level = Level(
                             course_id=course.id,
+                            commit_id=cur_inx,
                             title=level_data.get("name", f"关卡 {i-1}"),
                             description=level_data.get("description", ""),
                             requirements=level_data.get("requirements", ""),
                             order_number=i-1,
                         )
-                        
+                        print(new_level)
                         # 保存到数据库（使用事务）
                         db.add(new_level)
                         db.commit()
                         db.refresh(new_level)
                         
                         generated_count += 1
-                        logger.info(f'成功生成关卡: {new_level.title} (第 {generated_count} 个)')
-                        
+                        logger.info(f'成功生成关卡: {new_level.title} (第 {generated_count} 个)')     
                     else:
                         logger.warning(f"第 {i} 个提交未能生成有效的关卡数据")
                         
                 except Exception as level_error:
                     logger.error(f"生成第 {i} 个关卡时出错: {level_error}")
-                    # 继续处理下一个关卡，不中断整个流程
-                    db.rollback()
-                    continue
-            
-            logger.info(f'课程 {course_id} 关卡生成完成，共生成 {generated_count} 个关卡')
-            
+                        # 继续处理下一个关卡，不中断整个流程
+                    # db.rollback()
+             
         except Exception as e:
             logger.error(f"为课程 {course_id} 生成关卡时出错: {e}")
-            db.rollback()
+            # db.rollback()
             raise e
-            
         finally:
-            # 清理临时目录
-            if tmpdirname:
-                try:
-                    import shutil
-                    shutil.rmtree(tmpdirname)
-                    logger.info("已清理临时目录")
-                except Exception as cleanup_error:
-                    logger.warning(f"清理临时目录失败: {cleanup_error}")
-    
-
+            print("fine")

@@ -2,7 +2,9 @@ from google import genai
 from openai import OpenAI
 import os
 import logging
+import readline
 import json
+import requests
 from datetime import datetime
 # ====================== 日志配置模块 ======================
 # 设置日志存储目录（默认'logs'），确保目录存在
@@ -27,8 +29,6 @@ logger.addHandler(file_handler)
 # Simple cache configuration
 cache_file = "llm_cache.json"
 
-
-# By default, we Google Gemini 2.5 pro, as it shows great performance for code understanding
 def call_llm(prompt: str, use_cache: bool = True) -> str:
     # Log the prompt
     logger.info(f"PROMPT: {prompt}")
@@ -52,14 +52,12 @@ def call_llm(prompt: str, use_cache: bool = True) -> str:
 
     client = OpenAI(
     api_key = "sk-8ktQlDnxXoVQDXHVROHVZw7HvjzouiCZEnsXqEhuP0jfPG6k",
-    base_url = "https://api.moonshot.cn/v1",
-)
+    base_url = "https://api.moonshot.cn/v1")
  
     response = client.chat.completions.create(
     model = "kimi-k2-0711-preview",
     messages = [{"role": "user", "content": prompt}],
-    temperature = 0.6,
-)
+    temperature = 0.6)
 
     
     response_text = response.choices[0].message.content
@@ -86,3 +84,28 @@ def call_llm(prompt: str, use_cache: bool = True) -> str:
             logger.error(f"Failed to save cache: {e}")
 
     return response_text
+
+def call_MiniMax_llm(prompt: str) -> str:
+    group_id = os.getenv("MINIMAX_GROUP_ID")
+    api_key = os.getenv("MINIMAX_API_KEY")
+    url = f"https://api.minimax.chat/v1/text/chatcompletion_v2?GroupId={group_id}"
+    headers = {
+    "Authorization": f"Bearer {api_key}",
+    "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "MiniMax-M1",
+        "messages": [
+        {
+            "content": prompt,
+            "role": "user",
+            "name": "auto-mate"
+        }
+        ],
+        "stream": False,
+        "max_tokens": 3186,
+        "temperature": 1,
+        "top_p": 0.95
+        }
+    response = requests.post(url, headers=headers, json=payload)
+    return response.text

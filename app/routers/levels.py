@@ -51,7 +51,7 @@ async def get_level(
         logger.info(f"获取关卡详情请求: 课程ID={request.course_id}, 关卡ID={request.level_id}")
         
         # 1. 获取关卡基本信息
-        level_result = level_service.get_level_by_id(db, request.level_id)
+        level_result = level_service.get_level_by_id(db,request.course_id, request.level_id)
         
         if not level_result:
             raise HTTPException(
@@ -91,7 +91,7 @@ async def get_level(
             commits = get_full_commit_history(repo)
             print(f'getApi {commits}')
             # 计算提交索引（关卡顺序号 + 1，因为从第2个提交开始）
-            current_index = level_result.order_number + 1
+            current_index = level_result.commit_id
             
             # 验证提交索引是否有效
             if current_index > len(commits):
@@ -183,6 +183,7 @@ async def check_level_completion(
     """
     try:
         level_id = request.get("level_id")
+        course_id = request.get("course_id")
         if not level_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -258,7 +259,7 @@ async def check_level_completion(
             
             # 获取课程ID（从数据库查询关卡信息）
             try:
-                level_result = level_service.get_level_by_id(db, level_id)
+                level_result = level_service.get_level_by_id(db,course_id, level_id-1)
                 if not level_result:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,

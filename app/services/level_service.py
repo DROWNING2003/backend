@@ -21,7 +21,7 @@ class LevelService:
     def __init__(self):
         self.ai_service = AIService()
     
-    def get_level_by_id(self, db: Session, level_id: int) -> Optional[LevelResponse]:
+    def get_level_by_id(self, db: Session,course_id:int, level_id: int) -> Optional[LevelResponse]:
         """
         根据ID获取关卡详细信息
         
@@ -33,8 +33,11 @@ class LevelService:
             Optional[LevelResponse]: 关卡详细信息，如果不存在则返回None
         """
         try:
-            level = db.query(Level).filter(Level.id == level_id).first()
-            
+            level = db.query(Level).filter(
+                    Level.order_number == level_id,
+                    Level.course_id == course_id
+                ).first()
+            print("管卡",level)
             if not level:
                 return None
             
@@ -62,8 +65,10 @@ class LevelService:
         """
         try:
             # 获取关卡信息
-            level = db.query(Level).filter(Level.id == level_id).first()
-            
+            level = db.query(Level).filter(
+                    Level.order_number == level_id,
+                    Level.course_id == course_id
+                ).first()
             if not level:
                 raise Exception(f"关卡 {level_id} 不存在")
             
