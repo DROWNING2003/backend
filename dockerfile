@@ -50,9 +50,10 @@ ENV PYTHONUNBUFFERED=1
 COPY . .
 
 # 创建必要的目录
-RUN mkdir -p /app/{logs,app/logs,agentflow/logs} && \
+RUN mkdir -p /app/logs && \
+    mkdir -p /app/app/logs && \
+    mkdir -p /app/agentflow/logs && \
     chmod -R 777 /app/logs
-
 # 暴露端口
 EXPOSE 8080
 
