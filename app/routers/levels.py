@@ -41,8 +41,8 @@ async def get_level(
     """
     import tempfile
     from agentflow.utils.crawl_github_files import (
-        clone_repository, get_or_clone_repository, reset_to_commit, filter_and_read_files, 
-        get_file_patterns, get_exclude_patterns
+        clone_repository, get_or_clone_repository, checkout_to_commit, filter_and_read_files, 
+        get_file_patterns, get_exclude_patterns, get_full_commit_history
     )
     from app.utils.file_tree_builder import build_file_tree_from_files, sort_file_tree
     from app.models.course import Course
@@ -81,29 +81,38 @@ async def get_level(
             )
         
         # 4. 获取对应提交的文件
-        tmpdirname = None
         file_tree = None
         
         try:
             # 使用共享目录获取或克隆仓库
-            repo = get_or_clone_repository(course.git_url)
+            repo = get_or_clone_repository(course.git_url, update_to_latest=False)
             
+            # 获取所有提交（使用完整历史）
+            commits = get_full_commit_history(repo)
+            print(f'getApi {commits}')
             # 计算提交索引（关卡顺序号 + 1，因为从第2个提交开始）
             current_index = level_result.order_number + 1
             
-            # 重置到指定提交
-            commits = list(repo.iter_commits(reverse=True))
+            # 验证提交索引是否有效
             if current_index > len(commits):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"关卡对应的提交索引 {current_index} 超出仓库提交范围 (1-{len(commits)})"
-                )
+                logger.warning(f"关卡 {level_result.id} 的提交索引 {current_index} 超出仓库提交范围 (1-{len(commits)})，使用最后一个提交")
+                current_index = len(commits)
+            elif current_index < 1:
+                logger.warning(f"关卡 {level_result.id} 的提交索引 {current_index} 无效，使用第一个提交")
+                current_index = 1
             
-            reset_to_commit(repo, commits, current_index)
+            checkout_to_commit(repo, current_index)
             
             # 获取文件
+            repo_working_dir = repo.working_dir
+            if repo_working_dir is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="仓库工作目录为None，可能是裸仓库"
+                )
+            
             result = filter_and_read_files(
-                tmpdirname,
+                repo_working_dir,
                 max_file_size=1 * 1024 * 1024,
                 include_patterns=get_file_patterns("code"),  # 预定义代码模式
                 exclude_patterns=get_exclude_patterns("common")  # 排除常见无用文件
@@ -126,15 +135,6 @@ async def get_level(
             logger.error(f"获取Git文件失败: {git_error}")
             # 不中断主流程，只是没有文件树
             file_tree = None
-        
-        finally:
-            # 清理临时目录
-            if tmpdirname:
-                try:
-                    import shutil
-                    shutil.rmtree(tmpdirname)
-                except Exception as cleanup_error:
-                    logger.warning(f"清理临时目录失败: {cleanup_error}")
         
         # 5. 构建响应
         response_data = level_result.model_dump()
