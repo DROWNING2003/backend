@@ -1,41 +1,26 @@
-import os
-import tempfile
 from dotenv import load_dotenv
-from flow import create_flow, create_adaptive_flow
-from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, filter_and_read_files, get_commit_changes, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, checkout_to_commit
-# Load environment variables from .env file
+from agentflow.utils.crawl_github_files import checkout_to_commit, get_full_commit_history, get_or_clone_repository
+from agentflow.flow import create_adaptive_flow
 load_dotenv()
-
-def test_original_flow():
-    """测试原始的关卡生成流程"""
-    print("=== 测试原始流程 ===")
-    repo_url = "https://github.com/zengyi-thinking/auto_mate_test3_call"
-    shared = {
-        "currentIndex": 5,
-        "language": "中文",
-        "use_cache": True,
-        "max_abstraction_num": 5,
-        "project_name": repo_url, 
-    }
-    
-    flow = create_flow()
-    flow.run(shared)
-    print("原始流程结果:")
-    print(shared.get("res", "无结果"))
 
 def test_adaptive_flow():
     """测试自适应的关卡生成流程"""
     print("\n=== 测试自适应流程 ===")
-    repo_url = "https://github.com/zengyi-thinking/auto_mate_test3_call"
+    repo_url = "https://github.com/zengyi-thinking/auto_mate_test4_complex"
     
     try:
         # 克隆或获取仓库
         print("正在克隆/获取仓库...")
         repo = get_or_clone_repository(repo_url, update_to_latest=False)
         tmpdirname = repo.working_dir
-        
+        checkout_to_commit(repo, commit_index=2)
+        commits = get_full_commit_history(repo)
         # 设置共享数据
         shared = {
+            "accumulated_changes":[],#累计差异
+            "fullcommits": commits,
+            "max_commits_to_check":4, #最多commit
+            "commits_to_check":0, #当前累计commit
             "tmpdirname": tmpdirname,
             "project_name": repo_url,
             "currentIndex": 2,  # 从较早的提交开始测试
@@ -97,22 +82,5 @@ def test_adaptive_flow():
         print(f"❌ 自适应流程执行失败: {str(e)}")
         import traceback
         traceback.print_exc()
-
-def main():
-    """主函数：运行两种流程的测试"""
-    print("开始测试关卡生成流程...")
-    
-    # 可以选择运行哪个测试
-    run_original = False
-    run_adaptive = True
-
-    if run_adaptive:
-        try:
-            test_adaptive_flow()
-        except Exception as e:
-            print(f"自适应流程测试失败: {str(e)}")
-    
-    print("\n测试完成!")
-
-if __name__ == "__main__":
-    main()
+        
+test_adaptive_flow()

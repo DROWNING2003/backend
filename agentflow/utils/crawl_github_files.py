@@ -565,17 +565,17 @@ def filter_and_read_files(
 
             if file_size > max_file_size:
                 skipped_files.append((rel_path, file_size))
-                print(f"跳过 {rel_path}: 大小 {file_size} 超过限制 {max_file_size}")
+                # print(f"跳过 {rel_path}: 大小 {file_size} 超过限制 {max_file_size}")
                 continue
 
             # 如果指定了目标文件列表，只处理列表中的文件
             if target_files is not None and rel_path not in target_files:
-                print(f"跳过 {rel_path}: 不在目标文件列表中")
+                # print(f"跳过 {rel_path}: 不在目标文件列表中")
                 continue
             
             # 检查包含/排除模式
             if not should_include_file(rel_path, filename):
-                print(f"跳过 {rel_path}: 不匹配包含/排除模式")
+                # print(f"跳过 {rel_path}: 不匹配包含/排除模式")
                 continue
 
             # 读取内容
@@ -796,7 +796,7 @@ def get_commit_changes_detailed(repo: git.Repo, commit_index: int, include_diff_
                     file_info["diff_content"] = "[Binary file diff]"
             
             file_changes.append(file_info)
-        print(file_changes)
+        # print(file_changes)
         return {
             "commit_info": {
                 "index": commit_index,

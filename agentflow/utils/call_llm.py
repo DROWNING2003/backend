@@ -88,6 +88,7 @@ def call_llm(prompt: str, use_cache: bool = True) -> str:
 def call_MiniMax_llm(prompt: str) -> str:
     group_id = os.getenv("MINIMAX_GROUP_ID")
     api_key = os.getenv("MINIMAX_API_KEY")
+    print("________",api_key)
     url = f"https://api.minimax.chat/v1/text/chatcompletion_v2?GroupId={group_id}"
     headers = {
     "Authorization": f"Bearer {api_key}",

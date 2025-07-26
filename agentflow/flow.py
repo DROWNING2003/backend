@@ -1,12 +1,56 @@
 from pocketflow import Flow
 
-from agentflow.nodes import IdentifyAbstractions, ToLevelConverter
+from agentflow.nodes import IdentifyAbstractions, ToLevelConverter, EvaluateContextWorthiness, SkipToNextCommitNode
 
 def create_flow() -> Flow:
     identifyAbstractions = IdentifyAbstractions()
     toLevelConverter = ToLevelConverter()
     identifyAbstractions >> toLevelConverter
     return Flow(start=identifyAbstractions)
+
+def create_adaptive_flow() -> Flow:
+    """
+    创建自适应的关卡生成流程，会评估上下文价值并自动累积多个提交
+    
+    流程步骤：
+    1. 识别抽象概念 - 分析代码库提取核心知识点
+    2. 评估上下文价值 - 判断当前变更是否值得作为关卡，如不够则累积更多提交
+    3. 转换为关卡 - 基于累积的变更生成关卡内容
+    
+    输入参数（通过shared传递）：
+    - tmpdirname: 临时目录路径
+    - project_name: 项目名称
+    - currentIndex: 当前提交索引
+    - repo: Git仓库对象
+    - language: 输出语言（默认"chinese"）
+    - use_cache: 是否使用LLM缓存（默认True）
+    
+    输出结果（存储在shared中）：
+    - knowledge: 识别的抽象概念列表
+    - context_evaluation: 上下文评估结果
+    - res: 生成的关卡内容
+    """
+    from agentflow.nodes import IdentifyAbstractions, EvaluateContextWorthiness, ToLevelConverter, SkipToNextCommitNode
+    
+    # 创建节点实例
+    identify_abstractions = IdentifyAbstractions()
+    evaluate_context = EvaluateContextWorthiness()
+    to_level_converter = ToLevelConverter()
+    skip_to_next = SkipToNextCommitNode()
+    
+    # 构建流程链
+    identify_abstractions >> evaluate_context
+    
+    # 根据评估结果选择不同路径
+    evaluate_context - "worthy" >> to_level_converter
+    evaluate_context - "not_worthy" >> skip_to_next
+    
+    # 如果跳转成功，重新开始评估流程
+    skip_to_next - "continue" >> identify_abstractions
+    skip_to_next - "end" >> to_level_converter
+    
+    return Flow(start=identify_abstractions)
+
 
 def check_flow() -> Flow:
     """
@@ -42,3 +86,29 @@ def check_flow() -> Flow:
     get_level_info >> clone_repo >> get_standard_code >> analyze_user_code >> compare_and_judge
     
     return Flow(start=get_level_info)
+
+
+# 使用示例：
+# 
+# # 创建自适应关卡生成流程
+# flow = create_adaptive_flow()
+# 
+# # 设置输入参数
+# shared_data = {
+#     "tmpdirname": "/path/to/repo",
+#     "project_name": "MyProject", 
+#     "currentIndex": 1,
+#     "repo": git_repo_object,
+#     "language": "chinese",
+#     "use_cache": True
+# }
+# 
+# # 执行流程
+# result = flow.run(shared=shared_data)
+# 
+# # 获取结果
+# if result.shared.get("context_evaluation", {}).get("is_worthy"):
+#     level_content = result.shared["res"]
+#     print("生成的关卡内容:", level_content)
+# else:
+#     print("当前上下文不足以生成关卡")
