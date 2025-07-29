@@ -51,6 +51,31 @@ def create_adaptive_flow() -> Flow:
     
     return Flow(start=identify_abstractions)
 
+def create_test_flow() -> Flow:
+    '''
+    测试流程：简化的关卡生成流程，用于测试核心功能
+    
+    流程步骤：
+    1. 评估上下文价值 - 判断当前变更是否值得作为关卡，如不够则累积更多提交
+    2. 转换为关卡 - 基于累积的变更生成关卡内容
+    
+    '''
+    from agentflow.nodes import EvaluateContextWorthiness, ToLevelConverter, SkipToNextCommitNode
+    
+    # 创建节点实例
+    evaluate_context = EvaluateContextWorthiness()
+    to_level_converter = ToLevelConverter()
+    skip_to_next = SkipToNextCommitNode()
+    
+    # 根据评估结果选择不同路径
+    evaluate_context - "worthy" >> to_level_converter
+    evaluate_context - "not_worthy" >> skip_to_next
+    
+    # 如果跳转成功，重新开始评估流程
+    skip_to_next - "continue" >> evaluate_context
+    skip_to_next - "end" >> to_level_converter
+    
+    return Flow(start=evaluate_context)
 
 def check_flow() -> Flow:
     """

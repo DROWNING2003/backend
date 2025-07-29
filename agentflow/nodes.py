@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from agentflow.utils.yamltool import robust_yaml_parse
 from agentflow.utils.crawl_github_files import clone_repository, get_or_clone_repository, filter_and_read_files, get_commit_changes_detailed, get_exclude_patterns, get_file_patterns, checkout_to_commit
@@ -5,7 +6,8 @@ from agentflow.tools.search import TavilySearchTool
 import yaml
 from pocketflow import Node, BatchNode
 from agentflow.utils.call_llm import call_llm,call_MiniMax_llm
-
+from agentflow.utils.token_manager import token_manager, safe_call_llm
+logger = logging.getLogger(__name__)
 
 def analyze_results(query, results):
     """Analyze search results using LLM"""
@@ -83,6 +85,8 @@ class IdentifyAbstractions(Node):
         # currentIndex = shared["currentIndex"]
         project_name = shared["project_name"]
         # checkout_to_commit(repo,currentIndex)
+        
+        #全局分析会出现当前知识点与之前的重合
         result = filter_and_read_files(
             tmpdirname,
             max_file_size=1 * 1024 * 1024,
@@ -91,12 +95,19 @@ class IdentifyAbstractions(Node):
         )
         files = result["files"]
         shared["files"] = files
+        #增量分析
+        # repo = shared["repo"]
+        # currentIndex = shared["currentIndex"] 
+        # get_commit_changes_detailed(repo,currentIndex)
         # 准备阶段：构建LLM分析所需的上下文
 
         language = shared.get("language", "chinese")  # 默认为中文输出
         use_cache = shared.get("use_cache", True)  # 默认启用缓存
         max_abstraction_num = shared.get("max_abstraction_num", 3)  # 限制最大概念数量
         print("文件内容",files)
+        
+        # 首先截断文件内容以控制token数量
+        truncated_files = token_manager.truncate_files_content(files, max_tokens_per_file=3000)
         
         # 格式化代码内容供LLM分析
         def create_llm_context(files_data):
@@ -110,7 +121,7 @@ class IdentifyAbstractions(Node):
             return context, file_info
 
         # 生成LLM所需的上下文和文件列表
-        context, file_info = create_llm_context(files)
+        context, file_info = create_llm_context(truncated_files)
         file_listing_for_prompt = "\n".join(
             [f"- {idx} # {path}" for idx, path in file_info]
         )
@@ -159,7 +170,7 @@ class IdentifyAbstractions(Node):
 
 每个概念需要提供：
 1. `name`{name_lang_hint}：知识点名称
-2. `description`（约100字）{desc_lang_hint}：知识点描述
+2. `description`{desc_lang_hint}：知识点描述
 3. `file_indices`：相关文件索引列表
 
 文件索引对照表：
@@ -176,8 +187,16 @@ class IdentifyAbstractions(Node):
   file_indices:
     - 0 # 文件路径示例.py"""
 
+        # 优化prompt以控制token数量
+        optimized_context, optimized_prompt = token_manager.optimize_prompt_for_abstractions(
+            context, file_listing_for_prompt, prompt, max_context_tokens=100000
+        )
+        
+        # 重新构建最终prompt
+        final_prompt = prompt.replace(context, optimized_context)
+        
         # 调用LLM并处理响应
-        response = call_llm(prompt)
+        response = safe_call_llm(final_prompt, use_cache)
         print(response)
         # 提取和验证YAML响应
         yaml_str = response.split("```yaml")[1].split("```")[0].strip()
@@ -223,7 +242,7 @@ class EvaluateContextWorthiness(Node):
     def __init__(self):
         super().__init__()
         # self.max_commits_to_check = 4  # 最多检查5个连续提交
-        # self.min_code_changes = 5  # 最少代码变更行数
+        self.min_code_changes = 5  # 最少代码变更行数
         self.min_meaningful_files = 1  # 最少有意义的文件数量
     
     def prep(self, shared):
@@ -240,6 +259,201 @@ class EvaluateContextWorthiness(Node):
         use_cache = shared.get("use_cache", True)
         
         return (commits_to_check,fullcommits,accumulated_changes,repo, currentIndex,max_commits_to_check,knowledge, project_name, language, use_cache)
+    
+    def exec(self, prep_res):
+        (commits_to_check,fullcommits,accumulated_changes,repo,currentIndex,max_commits_to_check, knowledge,project_name, language, use_cache) = prep_res
+        
+        current_commit_index = currentIndex
+        
+        print("更改",accumulated_changes)
+        commits = list(fullcommits)
+        print("commits的长度",len(commits))
+        print(f'连续读取次数{commits_to_check},最大读取次数{max_commits_to_check}')
+        if commits_to_check < max_commits_to_check:
+            # if current_commit_index >= len(commits):
+            #     break
+                
+            # 获取当前提交的详细变更
+            detailed_changes = get_commit_changes_detailed(repo, current_commit_index, include_diff_content=True)
+            
+            # 累积变更信息
+            accumulated_changes.append({
+                'commit_index': current_commit_index,
+                'commit_message': commits[current_commit_index - 1].message.strip() if current_commit_index > 0 else "Initial commit",
+                'changes': detailed_changes
+            })
+            print("llm调用前检查",accumulated_changes)
+            # 评估当前累积的变更是否足够
+            evaluation_result = self._evaluate_changes_with_llm(
+                accumulated_changes, project_name, language, use_cache
+            )
+            print("评估结果",evaluation_result)
+            
+            if evaluation_result['is_worthy']:
+                return {
+                    "commits_to_check":commits_to_check,
+                    'is_worthy': True,
+                    'final_commit_index': current_commit_index,
+                    'accumulated_changes': accumulated_changes,
+                    'evaluation': evaluation_result,
+                    'commits_processed': commits_to_check + 1
+                }
+            else:
+                commits_to_check+=1
+                return {
+                "commits_to_check":commits_to_check,
+                'is_worthy': False,
+                'final_commit_index': current_commit_index,
+                'accumulated_changes': accumulated_changes,
+                'evaluation': evaluation_result if 'evaluation_result' in locals() else {'reason': '达到最大检查提交数量'},
+                'commits_processed': commits_to_check
+            }
+        print("到达连续次数",commits_to_check) 
+        return {
+                    'is_worthy': True,
+                    'final_commit_index': current_commit_index,
+                    'accumulated_changes': accumulated_changes,
+                    'commits_to_check':commits_to_check,
+                    'evaluation': {'reason': '达到最大检查提交数量'},
+                    'commits_processed': commits_to_check + 1
+                }
+        # 如果检查了最大数量的提交仍不够，返回当前累积的内容
+        
+    
+    def _evaluate_changes_with_llm(self, accumulated_changes, project_name, language, use_cache):
+        """使用LLM评估累积的变更是否值得作为一个关卡"""
+        
+        # 构建变更摘要
+        changes_summary = []
+        total_additions = 0
+        total_deletions = 0
+        meaningful_files = set()
+        
+        for change_info in accumulated_changes:
+            commit_msg = change_info['commit_message']
+            changes = change_info['changes']
+            
+            changes_summary.append(f"提交 {change_info['commit_index']}: {commit_msg}")
+            
+            for file_change in changes.get('file_changes', []):
+                if file_change.get('diff_content') and file_change['diff_content'] != "[Binary file diff]":
+                    # 统计代码行数变更
+                    diff_lines = file_change['diff_content'].split('\n')
+                    additions = len([line for line in diff_lines if line.startswith('+')])
+                    deletions = len([line for line in diff_lines if line.startswith('-')])
+                    
+                    total_additions += additions
+                    total_deletions += deletions
+                    
+                    # 检查是否是有意义的文件（非配置文件、非README等）
+                    # file_path = file_change['path'].lower()
+                    # if any(ext in file_path for ext in ['.py', '.js', '.java', '.cpp', '.c', '.go', '.rs', '.sol']):
+                    meaningful_files.add(file_change['path'])
+                    
+                    changes_summary.append(f"  - {file_change['path']} ({file_change['type']}): +{additions}/-{deletions}")
+        
+        changes_text = '\n'.join(changes_summary)
+        print(changes_text)
+        # 构建LLM提示词
+        prompt = f"""
+请评估项目 `{project_name}` 的以下代码变更是否值得作为一个入门编程学习关卡：
+在更改代码很少的时候思考是否在介绍基础知识语法
+## 变更摘要
+{changes_text}
+
+## 统计信息
+- 总代码行数变更: +{total_additions}/-{total_deletions}
+- 累积提交数: {len(accumulated_changes)}
+
+## 评估标准
+一个值得的关卡应该满足以下条件之一：
+1. 引入了新的编程概念或技术点就通过比如合同的创建，状态变量和整数，数学运算
+2. 需要作为为新人讲解这个知识点
+3. 包含足够的代码变更（通常 > 4行有效代码）
+4. 有教学价值，能让学习者学到新知识
+
+## 不值得的情况
+1. 仅仅是初始化空文件（如空的README、.gitignore等）
+2. 只是简单的配置修改
+3. 代码变更过少，没有实质内容
+4. 重复性的简单操作
+
+请以JSON格式回复：
+```json
+{{
+    "is_worthy": true/false,
+    "confidence": 0.0-1.0,
+    "reason": "详细说明为什么值得或不值得作为关卡",
+    "key_concepts": ["如果值得，列出主要的学习概念"],
+    "suggestions": "如果不值得，建议等待什么样的变更"
+}}
+```
+"""
+        
+        try:
+            response = call_llm(prompt, use_cache=use_cache)
+            
+            # 解析JSON响应
+            import json
+            if "```json" in response:
+                json_str = response.split("```json")[1].split("```")[0].strip()
+            else:
+                json_str = response.strip()
+            
+            result = json.loads(json_str)
+            
+            # 验证必要字段
+            if 'is_worthy' not in result:
+                result['is_worthy'] = total_additions + total_deletions > self.min_code_changes
+                result['reason'] = "LLM响应格式错误，使用基础规则判断"
+
+            return result
+            
+        except Exception as e:
+            # 如果LLM调用失败，使用基础规则
+            is_worthy = (
+                total_additions + total_deletions > self.min_code_changes and
+                len(meaningful_files) >= self.min_meaningful_files
+            )
+            
+            return {
+                'is_worthy': is_worthy,
+                'confidence': 0.5,
+                'reason': f"LLM评估失败，使用基础规则: 代码变更{total_additions + total_deletions}行，有意义文件{len(meaningful_files)}个",
+                'error': str(e)
+            }
+    
+    def post(self, shared, prep_res, exec_res):
+        # 更新共享数据
+        shared["context_evaluation"] = exec_res
+        shared["currentIndex"] = exec_res["final_commit_index"]
+        shared["commits_to_check"] = exec_res["commits_to_check"]
+        shared["accumulated_changes"] = exec_res["accumulated_changes"]
+        commits_to_check =shared["commits_to_check"]
+        if exec_res['is_worthy']:
+            print(f"✅ {commits_to_check}当前上下文值得作为关卡")
+            print(f"📝 评估原因: {exec_res['evaluation']['reason']}")
+            return "worthy"
+        else:
+            print(f"❌ {commits_to_check}当前上下文不值得作为关卡")
+            print(f"📝 评估原因: {exec_res['evaluation']['reason']}")
+            return "not_worthy"
+
+
+#教程生成节点，知识点的讲解      
+class KnowledgePointAnalysis(Node):
+    def prep(self, shared):
+        print("现在是KnowledgePointAnalysis节点")
+        repo = shared["repo"]
+        currentIndex = shared["currentIndex"]
+        fullcommits = shared["fullcommits"]
+        project_name = shared["project_name"]
+        accumulated_changes = shared["accumulated_changes"]
+        knowledge = shared["knowledge"]
+        max_commits_to_check = shared["max_commits_to_check"]
+        language = shared.get("language", "chinese")
+        use_cache = shared.get("use_cache", True) 
+        return (fullcommits,accumulated_changes,repo, currentIndex,max_commits_to_check,knowledge, project_name, language, use_cache)
     
     def exec(self, prep_res):
         (commits_to_check,fullcommits,accumulated_changes,repo,currentIndex,max_commits_to_check, knowledge,project_name, language, use_cache) = prep_res
@@ -421,6 +635,7 @@ class EvaluateContextWorthiness(Node):
             return "not_worthy"
 
 
+
 class ToLevelConverter(Node):
     def prep(self, shared):
         print("现在是生成节点")
@@ -458,14 +673,19 @@ class ToLevelConverter(Node):
                 for i, file_change in enumerate(changes.get('file_changes', [])):
                     if file_change.get('diff_content') and file_change['diff_content'] != "[Binary file diff]":
                         diff_lines = file_change['diff_content'].split('\n')
+                        # 截断diff内容以控制长度
+                        truncated_diff_lines = token_manager.truncate_diff_content(diff_lines, max_lines=50)
+                        
                         buffer.append(f"  {i+1}. {file_change['path']} ({file_change['type']})")
                         buffer.append(f"     Diff内容:")
-                        for line in diff_lines:
+                        for line in truncated_diff_lines:
                             if line.startswith('+'):
                                 buffer.append(f"       {line}")
                             elif line.startswith('-'):
                                 buffer.append(f"       {line}")
                             elif line.startswith('@@'):
+                                buffer.append(f"       {line}")
+                            elif line.startswith('[...'):
                                 buffer.append(f"       {line}")
         else:
             # 原有的单个提交处理逻辑
@@ -478,14 +698,19 @@ class ToLevelConverter(Node):
                 # 显示diff内容（如果有）
                 if file_change.get('diff_content') and file_change['diff_content'] != "[Binary file diff]":
                     diff_lines = file_change['diff_content'].split('\n')[:]
+                    # 截断diff内容以控制长度
+                    truncated_diff_lines = token_manager.truncate_diff_content(diff_lines, max_lines=50)
+                    
                     buffer.append(f"     Diff内容:")
                     buffer.append(f"  {i+1}. {file_change['path']} ({file_change['type']})")
-                    for line in diff_lines:
+                    for line in truncated_diff_lines:
                         if line.startswith('+'):
                             buffer.append(f"       {line}")
                         elif line.startswith('-'):
                             buffer.append(f"       {line}")
                         elif line.startswith('@@'):
+                            buffer.append(f"       {line}")
+                        elif line.startswith('[...'):
                             buffer.append(f"       {line}")
         
         buffer = '\n'.join(buffer)
@@ -516,38 +741,23 @@ class ToLevelConverter(Node):
             language,
         ) = prep_res  # Unpack parameters
         prompt = f"""
-▲▲▲ 必须遵守的YAML生成规则 ▲▲▲
 请根据项目 `{project_name}` 的代码库设计编程学习关卡，关卡描述使用markdown输出：
 
-### 输入上下文
-1. 代码变更详情：
+代码变更详情：
 {buffer}
-2. 全局知识点：
-{knowledge}
+教程规范
+1. **内容说明** - 用易于理解的话描述
+2. **语法讲解** - 使用例子讲解语法
+3. **把用户当成白痴** - 尽可能教会他们
 
-### 关卡设计规范
-每个知识点关卡必须包含：
-1. **知识点引入** - 用生活案例类比技术概念
-2. **任务要求** - 具体的代码实现目标
-3. **示例参考** - 可模仿的代码片段
+输出字段说明:
+    "name":标题名称，
+    "description":教程，
+    "requirements":编程挑战，复刻代码，注意举得例子不要是答案!
 
-### 输出格式要求
+Format the output as YAML:
 ```yaml
-  name: |-
-    关卡主题(8字以内) {name_lang_hint}
-  description: |-
-    ▸ 知识点介绍
-    ▸ 简单例子
-    ▸ 语法说明
-    ▸ 保持简洁明了
-  requirements: |-
-    ▸ 通过语言描述代码功能
-    ▸ 描述应有适当挑战性
-    ▸ 用户能根据描述复现代码
----
-### 示例
-```yaml
-  name: 数组
+  name: 数组基础语法
   description: |-
     如果你想建立一个集合，可以用 _数组_ 这样的数据类型。Solidity 支持两种数组: _静态_ 数组和 _动态_ 数组:
     ```solidity
@@ -573,13 +783,21 @@ class ToLevelConverter(Node):
   requirements: |
     为了把一个僵尸部队保存在我们的APP里，并且能够让其它APP看到这些僵尸，我们需要一个公共数组。
     创建一个数据类型为 Zombie 的结构体数组，用 public 修饰，命名为：zombies。
----
-### 关键注意事项
-1.严格保持2空格缩进层级
-2.代码块必须用三重反引号明确闭合
-3.避免在YAML中使用未转义的特殊符号
+```
+
+Now, provide the YAML output:
 """  
-        response = call_llm(prompt)
+        # 优化prompt以控制token数量
+        optimized_buffer, optimized_prompt = token_manager.optimize_prompt_for_level_generation(
+            buffer, prompt, max_buffer_tokens=80000
+        )
+        
+        # 重新构建最终prompt
+        final_prompt = prompt.replace(buffer, optimized_buffer)
+        
+        logger.info(f"1. 代码变更详情token数: {token_manager.count_tokens(optimized_buffer)} 2. 全局知识点：{knowledge}")
+     
+        response = safe_call_llm(final_prompt, use_cache)
         # --- Validation ---
         print(response)
         # yaml_str = response.strip().split("```yaml")[1].split("```")[0].strip()

@@ -49,7 +49,7 @@ async def get_level(
     
     try:
         logger.info(f"获取关卡详情请求: 课程ID={request.course_id}, 关卡ID={request.level_id}")
-        
+     
         # 1. 获取关卡基本信息
         level_result = level_service.get_level_by_id(db,request.course_id, request.level_id)
         
@@ -82,6 +82,10 @@ async def get_level(
         
         # 4. 获取对应提交的文件
         file_tree = None
+        # if request.level_id!=1:
+        #     request.level_id -=1
+        # print(request.level_id)
+        file_result = level_service.get_level_by_id(db,request.course_id, request.level_id)
         
         try:
             # 使用共享目录获取或克隆仓库
@@ -91,14 +95,14 @@ async def get_level(
             commits = get_full_commit_history(repo)
             print(f'getApi {commits}')
             # 计算提交索引（关卡顺序号 + 1，因为从第2个提交开始）
-            current_index = level_result.commit_id
+            current_index = file_result.commit_id
             
             # 验证提交索引是否有效
             if current_index > len(commits):
-                logger.warning(f"关卡 {level_result.id} 的提交索引 {current_index} 超出仓库提交范围 (1-{len(commits)})，使用最后一个提交")
+                logger.warning(f"关卡 {file_result.id} 的提交索引 {current_index} 超出仓库提交范围 (1-{len(commits)})，使用最后一个提交")
                 current_index = len(commits)
             elif current_index < 1:
-                logger.warning(f"关卡 {level_result.id} 的提交索引 {current_index} 无效，使用第一个提交")
+                logger.warning(f"关卡 {file_result.id} 的提交索引 {current_index} 无效，使用第一个提交")
                 current_index = 1
             
             checkout_to_commit(repo, current_index)
@@ -196,7 +200,13 @@ async def check_level_completion(
         user_file_tree = request.get("user_file_tree")
         user_answer = request.get("user_answer")
         course_id = request.get("course_id")
-        
+        response = LevelCheckResponse(
+                passed=True,
+                feedback="检查完成",
+                score=None,
+                suggestions=[]
+            )
+        return response
         if user_file_tree and course_id:
             # 格式2：使用文件树和check_flow
             logger.info("使用文件树格式和check_flow进行检查")

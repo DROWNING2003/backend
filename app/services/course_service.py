@@ -437,7 +437,7 @@ class CourseService:
                     shared = {
                     "accumulated_changes":[],#累计差异
                     "fullcommits": commits,
-                    "max_commits_to_check":3, #最多commit
+                    "max_commits_to_check":1, #最多commit
                     "commits_to_check":1, #当前累计commit
                     "tmpdirname": tmpdirname,
                     "project_name": repo_url,
@@ -453,18 +453,18 @@ class CourseService:
                     flow = create_adaptive_flow()
                     flow.run(shared)
                     cur_inx = shared["currentIndex"]
-                    i+=1
+                  
                     print("res",shared["res"])
                     if shared["res"] and len(shared["res"]) > 0:
                         level_data = shared["res"][0]
                         # 创建关卡对象
                         new_level = Level(
                             course_id=course.id,
-                            commit_id=cur_inx,
+                            commit_id=cur_inx-1,
                             title=level_data.get("name", f"关卡 {i-1}"),
                             description=level_data.get("description", ""),
                             requirements=level_data.get("requirements", ""),
-                            order_number=i-1,
+                            order_number=i,
                         )
                         print(new_level)
                         # 保存到数据库（使用事务）
@@ -476,7 +476,7 @@ class CourseService:
                         logger.info(f'成功生成关卡: {new_level.title} (第 {generated_count} 个)')     
                     else:
                         logger.warning(f"第 {i} 个提交未能生成有效的关卡数据")
-                        
+                    i+=1   
                 except Exception as level_error:
                     logger.error(f"生成第 {i} 个关卡时出错: {level_error}")
                         # 继续处理下一个关卡，不中断整个流程

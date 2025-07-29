@@ -28,9 +28,28 @@ logger.addHandler(file_handler)
 # Simple cache configuration
 cache_file = "llm_cache.json"
 
-def call_llm(prompt: str, use_cache: bool = True) -> str:
+def call_llm(prompt: str, use_cache: bool = True, max_tokens: int = 120000) -> str:
     # Log the prompt
     logger.info(f"PROMPT: {prompt}")
+
+    # Check and truncate prompt if too long
+    try:
+        import tiktoken
+        encoding = tiktoken.get_encoding("cl100k_base")
+        prompt_tokens = len(encoding.encode(prompt))
+        
+        if prompt_tokens > max_tokens:
+            logger.warning(f"Prompt过长 ({prompt_tokens} tokens)，截断到 {max_tokens} tokens")
+            # 截断prompt，保留重要部分
+            tokens = encoding.encode(prompt)
+            truncated_tokens = tokens[:max_tokens]
+            prompt = encoding.decode(truncated_tokens)
+            prompt += "\n\n[... 内容被截断以控制token数量 ...]"
+            
+    except ImportError:
+        logger.warning("tiktoken未安装，无法检查token数量")
+    except Exception as e:
+        logger.warning(f"Token检查失败: {e}")
 
     # Check cache if enabled
     if use_cache:
@@ -48,41 +67,50 @@ def call_llm(prompt: str, use_cache: bool = True) -> str:
             logger.info(f"RESPONSE: {cache[prompt]}")
             return cache[prompt]
 
+    try:
+        client = OpenAI(
+        api_key = "sk-8ktQlDnxXoVQDXHVROHVZw7HvjzouiCZEnsXqEhuP0jfPG6k",
+        base_url = "https://api.moonshot.cn/v1")
+     
+        response = client.chat.completions.create(
+        model = "kimi-k2-0711-preview",
+        messages = [{"role": "user", "content": prompt}],
+        temperature = 0.6)
 
-    client = OpenAI(
-    api_key = "sk-8ktQlDnxXoVQDXHVROHVZw7HvjzouiCZEnsXqEhuP0jfPG6k",
-    base_url = "https://api.moonshot.cn/v1")
- 
-    response = client.chat.completions.create(
-    model = "kimi-k2-0711-preview",
-    messages = [{"role": "user", "content": prompt}],
-    temperature = 0.6)
+        
+        response_text = response.choices[0].message.content
 
-    
-    response_text = response.choices[0].message.content
+        logger.info(f"RESPONSE: {response_text}")
 
-    logger.info(f"RESPONSE: {response_text}")
+        # Update cache if enabled
+        if use_cache:
+            # Load cache again to avoid overwrites
+            cache = {}
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        cache = json.load(f)
+                except:
+                    pass
 
-    # Update cache if enabled
-    if use_cache:
-        # Load cache again to avoid overwrites
-        cache = {}
-        if os.path.exists(cache_file):
+            # Add to cache and save
+            cache[prompt] = response_text
             try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    cache = json.load(f)
-            except:
-                pass
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache, f)
+            except Exception as e:
+                logger.error(f"Failed to save cache: {e}")
 
-        # Add to cache and save
-        cache[prompt] = response_text
-        try:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(cache, f)
-        except Exception as e:
-            logger.error(f"Failed to save cache: {e}")
-
-    return response_text
+        return response_text
+        
+    except Exception as e:
+        if "token limit" in str(e).lower():
+            logger.error(f"Token限制错误: {e}")
+            # 如果还是超限，进一步截断
+            if max_tokens > 50000:
+                logger.info("尝试进一步截断prompt")
+                return call_llm(prompt, use_cache, max_tokens=50000)
+        raise e
 
 def call_MiniMax_llm(prompt: str) -> str:
     group_id = os.getenv("MINIMAX_GROUP_ID")

@@ -50,10 +50,24 @@ def robust_yaml_parse(response):
     return documents
 
 def extract_yaml_block(text):
-    """提取 YAML 代码块"""
-    pattern = r'```yaml\n(.*?)\n```'
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(1) if match else None
+    """提取 YAML 代码块（兼容末尾没有```的情况）"""
+    # 情况1：标准 ```yaml...``` 格式
+    standard_pattern = r'```yaml\n(.*?)\n```'
+    match = re.search(standard_pattern, text, re.DOTALL)
+    if match:
+        return match.group(1)
+    
+    # 情况2：只有开始 ```yaml 没有结束 ```
+    open_pattern = r'```yaml\n(.*)'
+    match = re.search(open_pattern, text, re.DOTALL)
+    if match:
+        return match.group(1)
+    
+    # 情况3：没有代码块标记，但可能是纯YAML内容
+    if any(keyword in text.lower() for keyword in ['name:', 'description:', 'requirements:']):
+        return text.strip()
+    
+    return None
 
 def preprocess_yaml(yaml_text):
     """预处理 YAML 文本"""
@@ -129,23 +143,62 @@ def try_recover_document(doc):
 if __name__ == "__main__":
     # 模拟 AI 响应
     ai_response = """
-    一些文本...
-    ```yaml
-    - name: |
-        模块探险：从工具箱里取工具
-      description: |-
-        想像你有一个超大工具箱...
-        • 抽屉A只放螺丝刀；
-        • 抽屉B里又更小...
-        
-        ```python
-        from module import func
-        ```
-      requirements: |-
-        • 第一项任务
-        • 第二项任务
-    ```
-    更多文本...
+```yaml
+name: 给僵尸工厂添加“造僵尸”的方法
+description: |-
+  上一章我们把僵尸的 DNA 和名字封装成了一个叫 `Zombie` 的结构体，也学会了用 `public` 数组把它公开出去。
+  现在我们要真正“造”出僵尸来，也就是写一个函数，把新的僵尸塞进数组里。
+
+  ## 函数的基本写法
+  在 Solidity 里，函数长这样：
+
+  ```solidity
+  function 函数名(参数类型 参数名, …) public {
+      // 函数体：要执行的代码
+  }
+  ```
+
+  举个最简单的例子，把两个数字加起来：
+
+  ```solidity
+  function add(uint a, uint b) public pure returns (uint) {
+      return a + b;
+  }
+  ```
+
+  注意：
+  - `public` 表示任何人都能调用这个函数（包括别的合约、前端网页）。
+  - 如果函数只是“做一件事”而不返回结果，可以省略 `returns (...)`。
+
+  ## 往数组里塞东西
+  数组有一个内置方法 `push()`，可以把新元素追加到末尾：
+
+  ```solidity
+  uint[] numbers;        // 声明一个动态数组
+  numbers.push(42);      // 现在数组里有一个元素 42
+  ```
+
+  结构体也一样：
+
+  ```solidity
+  Person[] people;
+  people.push(Person("Alice", 18));
+  ```
+
+  也就是说：
+  1. 先“打包”好一个结构体变量；
+  2. 再把它 `push` 进数组。
+
+requirements: |
+  在 `ZombieFactory` 合约里写一个 `createZombie` 函数：
+  - 函数名：`createZombie`
+  - 参数：`_name`（string 类型）、`_dna`（uint 类型）
+  - 可见性：`public`
+  - 函数体：用传入的 `_name` 与 `_dna` 创建一个新的 `Zombie` 结构体，并把它 `push` 到 `zombies` 数组中。
+
+  提示：可以先在函数里写 `Zombie memory newZombie = Zombie(_name, _dna);` 再 `zombies.push(newZombie);`
+  请不要照抄，自己敲一遍！
+  ```
     """
     
     # 解析 YAML
